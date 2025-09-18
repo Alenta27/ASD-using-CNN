@@ -1,0 +1,25 @@
+/* General Styles */
+body {
+  font-family: 'Nunito', sans-serif;
+}
+
+/* Card Styles */
+.card {
+  background-color: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  padding: 1.5rem;
+}
+
+/* Color Palette */
+.bg-light-blue {
+  background-color: #E0F7FA;
+}
+
+.bg-mint-green {
+  background-color: #E8F5E9;
+}
+
+.bg-soft-yellow {
+  background-color: #FFF9C4;
+}
