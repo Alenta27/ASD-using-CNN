@@ -1,0 +1,37 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pkl
+*.h5
+*.json
+*.log
+*.csv
+
+# Datasets & Models
+ASD_Dataset/
+backend/ai_model/
+backend/asd_fmri/
+backend/uploads/
+data/
+test-results/
+
+# Environment files
+.env
+credentials/
+venv/
+*.env
+
+# IDE & System files
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Misc
+*.txt
+*.md
