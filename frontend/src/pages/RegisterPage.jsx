@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { GoogleLogin } from '@react-oauth/google';
+import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 import { Link, useNavigate } from 'react-router-dom';
 import { jwtDecode } from 'jwt-decode';
+
+const googleClientId = process.env.REACT_APP_GOOGLE_CLIENT_ID || "3074679378-fbmg47osjqajq7u4cv0qja7svo00pv3m.apps.googleusercontent.com";
 
 export default function RegisterPage() {
   const [name, setName] = useState('');
@@ -213,23 +215,24 @@ export default function RegisterPage() {
   const eyeOffIcon = ( <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.91 4.24A9.97 9.97 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.94 4.06M2 2l20 20"></path></svg> );
 
   return (
-    <div className="min-h-screen md:flex font-sans">
-      
-      <div 
-        className="relative hidden md:block md:w-1/2 bg-cover bg-center"
-        style={{ backgroundImage: 'url(/images/register-bg.jpg)' }}
-      >
-        <div className="absolute inset-0 bg-black opacity-25"></div>
-      </div>
+    <GoogleOAuthProvider clientId={googleClientId}>
+      <div className="min-h-screen md:flex font-sans">
+        
+        <div 
+          className="relative hidden md:block md:w-1/2 bg-cover bg-center"
+          style={{ backgroundImage: 'url(/images/register-bg.jpg)' }}
+        >
+          <div className="absolute inset-0 bg-black opacity-25"></div>
+        </div>
 
-      <div className="w-full md:w-1/2 flex items-center justify-center bg-white p-6 sm:p-12">
-        <div className="w-full max-w-md">
-          <h2 className="text-3xl font-bold text-gray-800 mb-4">
-            Create Your Account
-          </h2>
-          <p className="text-gray-500 mb-8">
-            Join our community to access screening tools and resources.
-          </p>
+        <div className="w-full md:w-1/2 flex items-center justify-center bg-white p-6 sm:p-12">
+          <div className="w-full max-w-md">
+            <h2 className="text-3xl font-bold text-gray-800 mb-4">
+              Create Your Account
+            </h2>
+            <p className="text-gray-500 mb-8">
+              Join our community to access screening tools and resources.
+            </p>
           
           <form className="space-y-5" onSubmit={handleRegister}>
             <div>
@@ -381,5 +384,6 @@ export default function RegisterPage() {
         </div>
       </div>
     </div>
+  </GoogleOAuthProvider>
   );
 }

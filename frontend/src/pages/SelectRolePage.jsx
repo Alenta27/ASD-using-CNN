@@ -19,6 +19,22 @@ const SelectRolePage = () => {
             // The backend sends back a new token with the updated role, so we save it
             localStorage.setItem('token', res.data.token);
 
+            // Save the role-specific ID to localStorage
+            if (res.data.user) {
+                const roleIdField = {
+                    parent: 'parentId',
+                    therapist: 'therapistId',
+                    teacher: 'teacherId',
+                    researcher: 'researcherId',
+                    admin: 'adminId'
+                };
+                
+                const idField = roleIdField[role];
+                if (idField && res.data.user[idField]) {
+                    localStorage.setItem(idField, res.data.user[idField]);
+                }
+            }
+
             // Now, we can decode the new token and redirect to the correct dashboard
             const decodedToken = jwtDecode(res.data.token);
             const userRole = decodedToken.role;
@@ -27,8 +43,10 @@ const SelectRolePage = () => {
                 navigate('/admin');
             } else if (userRole === 'researcher') {
                 navigate('/research');
-            } else if (userRole === 'therapist' || userRole === 'teacher') {
+            } else if (userRole === 'therapist') {
                 navigate('/therapist');
+            } else if (userRole === 'teacher') {
+                navigate('/teacher');
             } else {
                 navigate('/dashboard'); // Default for 'parent'
             }
