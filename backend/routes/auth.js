@@ -133,7 +133,22 @@ router.put('/api/user/role', async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || "your-super-secret-jwt-key-change-this-in-production");
         const userId = decoded.id;
 
-        const user = await User.findByIdAndUpdate(userId, { role }, { new: true });
+        // Build update object with role and corresponding unique ID
+        const updateData = { role };
+        
+        if (role === 'parent' && !await User.findById(userId).select('parentId').then(u => u?.parentId)) {
+            updateData.parentId = generateUniqueId('parent');
+        } else if (role === 'therapist' && !await User.findById(userId).select('therapistId').then(u => u?.therapistId)) {
+            updateData.therapistId = generateUniqueId('therapist');
+        } else if (role === 'teacher' && !await User.findById(userId).select('teacherId').then(u => u?.teacherId)) {
+            updateData.teacherId = generateUniqueId('teacher');
+        } else if (role === 'researcher' && !await User.findById(userId).select('researcherId').then(u => u?.researcherId)) {
+            updateData.researcherId = generateUniqueId('researcher');
+        } else if (role === 'admin' && !await User.findById(userId).select('adminId').then(u => u?.adminId)) {
+            updateData.adminId = generateUniqueId('admin');
+        }
+
+        const user = await User.findByIdAndUpdate(userId, updateData, { new: true });
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
         }
@@ -143,7 +158,20 @@ router.put('/api/user/role', async (req, res) => {
             process.env.JWT_SECRET || "your-super-secret-jwt-key-change-this-in-production",
             { expiresIn: "1h" }
         );
-        res.json({ message: "Role updated successfully", token: newToken });
+        res.json({ 
+            message: "Role updated successfully", 
+            token: newToken,
+            user: {
+                id: user._id,
+                email: user.email,
+                role: user.role,
+                parentId: user.parentId,
+                therapistId: user.therapistId,
+                teacherId: user.teacherId,
+                researcherId: user.researcherId,
+                adminId: user.adminId
+            }
+        });
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });
     }
@@ -181,29 +209,47 @@ router.post('/api/auth/google', async (req, res) => {
         
         console.log('✅ Google token verified successfully for:', payload.email);
         const { email, name } = payload;
+        const normalizedEmail = email.toLowerCase();
 
         let user = null;
         let isNewUser = false;
         
         try {
-            user = await User.findOne({ email }).maxTimeMS(5000);
+            user = await User.findOne({ email: { $regex: `^${email}$`, $options: 'i' } }).maxTimeMS(5000);
+            if (user) {
+                console.log(`✅ Found existing user: ${user.email}, Role: ${user.role}`);
+                // Check if user has a valid role, if not, treat as new user needing role selection
+                const validRoles = ['parent', 'therapist', 'teacher', 'researcher', 'admin'];
+                if (!user.role || !validRoles.includes(user.role)) {
+                    console.log(`⚠️ User ${user.email} has invalid/undefined role (${user.role}), treating as new user`);
+                    isNewUser = true;
+                } else {
+                    console.log(`✅ User has valid role: ${user.role}, isNewUser: false`);
+                    isNewUser = false;
+                }
+            }
+            if (user && user.email !== normalizedEmail) {
+                user.email = normalizedEmail;
+                await user.save();
+            }
             if (!user) {
                 isNewUser = true;
-                console.log('Creating new user from Google auth:', email);
-                user = new User({ 
-                    username: email, 
-                    email, 
+                console.log(`⚠️ User not found in DB, creating new guest user: ${normalizedEmail}`);
+                user = new User({
+                    username: name || normalizedEmail,
+                    email: normalizedEmail,
                     password: '',
-                    role: 'guest' 
+                    role: 'guest'
                 });
                 await user.save();
+                console.log(`✅ New guest user created: ${normalizedEmail}`);
             }
         } catch (dbErr) {
             console.warn('⚠️ MongoDB unavailable, creating temporary user object:', dbErr.message);
             // If DB is down, create a temporary user object for JWT generation
             user = {
                 _id: `temp-${Date.now()}`,
-                email,
+                email: normalizedEmail,
                 role: 'guest'
             };
             isNewUser = true;
@@ -950,6 +996,82 @@ router.post('/api/auth/login', async (req, res) => {
 
     } catch (err) {
         console.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Update user role endpoint - called when user selects role after Google sign-in
+router.put('/api/user/role', async (req, res) => {
+    try {
+        const { token, role } = req.body;
+        
+        if (!token || !role) {
+            return res.status(400).json({ message: 'Token and role are required' });
+        }
+        
+        // Verify the JWT token
+        const decoded = jwt.verify(
+            token,
+            process.env.JWT_SECRET || "your-super-secret-jwt-key-change-this-in-production"
+        );
+        
+        // Find the user
+        const user = await User.findById(decoded.id);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        
+        // Update the role
+        user.role = role;
+        
+        // Generate role-specific ID if it doesn't exist
+        if (role === 'parent' && !user.parentId) {
+            user.parentId = generateUniqueId('parent');
+        } else if (role === 'therapist' && !user.therapistId) {
+            user.therapistId = generateUniqueId('therapist');
+        } else if (role === 'teacher' && !user.teacherId) {
+            user.teacherId = generateUniqueId('teacher');
+        } else if (role === 'researcher' && !user.researcherId) {
+            user.researcherId = generateUniqueId('researcher');
+        } else if (role === 'admin' && !user.adminId) {
+            user.adminId = generateUniqueId('admin');
+        }
+        
+        // Save the user
+        await user.save();
+        
+        // Generate new token with updated role
+        const newToken = jwt.sign(
+            { id: user._id, email: user.email, role: user.role },
+            process.env.JWT_SECRET || "your-super-secret-jwt-key-change-this-in-production",
+            { expiresIn: '1h' }
+        );
+        
+        // Return response with updated user data and new token
+        res.json({
+            message: 'Role updated successfully',
+            token: newToken,
+            user: {
+                id: user._id,
+                email: user.email,
+                role: user.role,
+                parentId: user.parentId,
+                therapistId: user.therapistId,
+                teacherId: user.teacherId,
+                researcherId: user.researcherId,
+                adminId: user.adminId
+            }
+        });
+    } catch (err) {
+        console.error('Role update error:', err);
+        
+        if (err.name === 'JsonWebTokenError') {
+            return res.status(401).json({ message: 'Invalid token' });
+        }
+        if (err.name === 'TokenExpiredError') {
+            return res.status(401).json({ message: 'Token expired' });
+        }
+        
         res.status(500).json({ message: 'Server error' });
     }
 });

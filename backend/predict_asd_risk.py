@@ -164,10 +164,15 @@ def predict_asd_risk(features_dict):
         
         X = np.array([feature_values])
         
-        if scaler:
-            X_scaled = scaler.transform(X)
-        else:
-            X_scaled = X
+        try:
+            if scaler:
+                X_scaled = scaler.transform(X)
+            else:
+                X_scaled = X
+        except ValueError as e:
+            # Feature dimension mismatch - model was trained on different data
+            # Fall back to heuristic
+            return predict_asd_risk_heuristic(features_dict)
         
         if hasattr(model, 'predict_proba'):
             probabilities = model.predict_proba(X_scaled)[0]

@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const router = express.Router();
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 const { verifyToken, teacherCheck, requireResourceAccess } = require('../middlewares/auth');
 const User = require('../models/user');
 const Patient = require('../models/patient');
