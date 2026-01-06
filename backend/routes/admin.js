@@ -290,4 +290,93 @@ router.get('/recent-therapist-requests', verifyToken, adminCheck, async (req, re
   }
 });
 
+// Get all active therapists
+router.get('/therapists', verifyToken, adminCheck, async (req, res) => {
+  try {
+    const therapists = await User.find({
+      role: 'therapist',
+      isActive: true,
+      status: 'approved'
+    })
+      .select('_id username firstName lastName email')
+      .sort({ username: 1 });
+
+    const formattedTherapists = therapists.map(t => ({
+      id: t._id,
+      name: `${t.firstName || ''} ${t.lastName || ''}`.trim() || t.username || t.email,
+      email: t.email
+    }));
+
+    res.json(formattedTherapists);
+  } catch (error) {
+    console.error('Error fetching therapists:', error);
+    res.status(500).json({ error: 'Failed to fetch therapists', details: error.message });
+  }
+});
+
+// Assign therapist to patient
+router.put('/children/:childId/assign-therapist', verifyToken, adminCheck, async (req, res) => {
+  try {
+    const { childId } = req.params;
+    const { therapistId } = req.body;
+
+    if (!therapistId) {
+      return res.status(400).json({ error: 'Therapist ID is required' });
+    }
+
+    const patient = await Patient.findById(childId);
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    const therapist = await User.findOne({
+      _id: therapistId,
+      role: 'therapist',
+      isActive: true,
+      status: 'approved'
+    });
+
+    if (!therapist) {
+      return res.status(404).json({ error: 'Therapist not found or inactive' });
+    }
+
+    patient.therapist_user_id = therapistId;
+    await patient.save();
+
+    const therapistName = `${therapist.firstName || ''} ${therapist.lastName || ''}`.trim() || therapist.username;
+    res.json({
+      success: true,
+      message: `Patient assigned to therapist ${therapistName}`,
+      patient
+    });
+  } catch (error) {
+    console.error('Error assigning therapist:', error);
+    res.status(500).json({ error: 'Failed to assign therapist', details: error.message });
+  }
+});
+
+// Unassign therapist from patient
+router.put('/children/:childId/unassign-therapist', verifyToken, adminCheck, async (req, res) => {
+  try {
+    const { childId } = req.params;
+
+    const patient = await Patient.findById(childId);
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    patient.therapist_user_id = null;
+    await patient.save();
+
+    res.json({
+      success: true,
+      message: 'Therapist unassigned from patient',
+      patient
+    });
+  } catch (error) {
+    console.error('Error unassigning therapist:', error);
+    res.status(500).json({ error: 'Failed to unassign therapist', details: error.message });
+  }
+});
+
 module.exports = router;

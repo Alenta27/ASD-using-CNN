@@ -19,7 +19,8 @@ const TeacherSettings = require("../models/teacherSettings");
 const Meeting = require("../models/meeting");
 const Report = require("../models/report");
 
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || "3074679378-fbmg47osjqajq7u4cv0qja7svo00pv3m.apps.googleusercontent.com");
+const googleClientId = (process.env.GOOGLE_CLIENT_ID || "3074679378-fbmg47osjqajq7u4cv0qja7svo00pv3m.apps.googleusercontent.com").trim();
+const googleClient = new OAuth2Client(googleClientId);
 
 const credentialsDir = path.join(__dirname, '../credentials');
 if (!fs.existsSync(credentialsDir)) {
@@ -122,69 +123,13 @@ router.post('/api/register', uploadCredentials.single('doctoraldegree'), async (
     }
 })
 
-// --- NEW ENDPOINT: To set a user's role after they sign up ---
-router.put('/api/user/role', async (req, res) => {
-    // We get the userId from the token to make this secure
-    const { token, role } = req.body;
-    if (!token || !role) {
-        return res.status(400).json({ message: 'Token and role are required.' });
-    }
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || "your-super-secret-jwt-key-change-this-in-production");
-        const userId = decoded.id;
-
-        // Build update object with role and corresponding unique ID
-        const updateData = { role };
-        
-        if (role === 'parent' && !await User.findById(userId).select('parentId').then(u => u?.parentId)) {
-            updateData.parentId = generateUniqueId('parent');
-        } else if (role === 'therapist' && !await User.findById(userId).select('therapistId').then(u => u?.therapistId)) {
-            updateData.therapistId = generateUniqueId('therapist');
-        } else if (role === 'teacher' && !await User.findById(userId).select('teacherId').then(u => u?.teacherId)) {
-            updateData.teacherId = generateUniqueId('teacher');
-        } else if (role === 'researcher' && !await User.findById(userId).select('researcherId').then(u => u?.researcherId)) {
-            updateData.researcherId = generateUniqueId('researcher');
-        } else if (role === 'admin' && !await User.findById(userId).select('adminId').then(u => u?.adminId)) {
-            updateData.adminId = generateUniqueId('admin');
-        }
-
-        const user = await User.findByIdAndUpdate(userId, updateData, { new: true });
-        if (!user) {
-            return res.status(404).json({ message: 'User not found.' });
-        }
-        // Generate a new token with the updated role
-        const newToken = jwt.sign(
-            { id: user._id, email: user.email, role: user.role },
-            process.env.JWT_SECRET || "your-super-secret-jwt-key-change-this-in-production",
-            { expiresIn: "1h" }
-        );
-        res.json({ 
-            message: "Role updated successfully", 
-            token: newToken,
-            user: {
-                id: user._id,
-                email: user.email,
-                role: user.role,
-                parentId: user.parentId,
-                therapistId: user.therapistId,
-                teacherId: user.teacherId,
-                researcherId: user.researcherId,
-                adminId: user.adminId
-            }
-        });
-    } catch (err) {
-        res.status(500).json({ message: "Server error", error: err.message });
-    }
-});
-
 // ---------------- Google Authentication Route (Updated) ----------------
 router.post('/api/auth/google', async (req, res) => {
     const { token } = req.body;
     console.log('=== Google Auth Request ===');
     console.log('Received Google token:', token ? 'Token received' : 'No token');
     console.log('Token length:', token ? token.length : 0);
-    console.log('Token preview:', token ? token.substring(0, 50) + '...' : 'No token');
-    console.log('Google Client ID being used:', process.env.GOOGLE_CLIENT_ID || 'NOT SET');
+    console.log('Google Client ID being used:', googleClientId);
     
     if (!token) {
         return res.status(400).json({ message: "No token provided" });
@@ -194,17 +139,19 @@ router.post('/api/auth/google', async (req, res) => {
         // Verify Google token
         console.log('Attempting to verify Google token...');
         const ticket = await googleClient.verifyIdToken({
-            idToken: token
+            idToken: token,
+            audience: googleClientId
         });
         const payload = ticket.getPayload();
+        console.log('Token payload received for:', payload.email);
         
-        // Manual audience verification
-        const expectedAudience = process.env.GOOGLE_CLIENT_ID || "3074679378-fbmg47osjqajq7u4cv0qja7svo00pv3m.apps.googleusercontent.com";
-        if (payload.aud !== expectedAudience) {
+        // Verify audience from payload (robust check)
+        const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+        if (!aud.includes(googleClientId)) {
             console.error('❌ AUDIENCE MISMATCH:');
-            console.error('Expected:', expectedAudience);
+            console.error('Expected:', googleClientId);
             console.error('Got:', payload.aud);
-            throw new Error(`Invalid audience: expected ${expectedAudience}, got ${payload.aud}`);
+            throw new Error(`Invalid audience: expected ${googleClientId}, got ${payload.aud}`);
         }
         
         console.log('✅ Google token verified successfully for:', payload.email);
@@ -215,7 +162,13 @@ router.post('/api/auth/google', async (req, res) => {
         let isNewUser = false;
         
         try {
-            user = await User.findOne({ email: { $regex: `^${email}$`, $options: 'i' } }).maxTimeMS(5000);
+            // Find user by email (case-insensitive)
+            user = await User.findOne({ email: normalizedEmail }).maxTimeMS(5000);
+            
+            if (!user) {
+                // Fallback: try case-insensitive search for existing users
+                user = await User.findOne({ email: { $regex: `^${normalizedEmail}$`, $options: 'i' } }).maxTimeMS(5000);
+            }
             if (user) {
                 console.log(`✅ Found existing user: ${user.email}, Role: ${user.role}`);
                 // Check if user has a valid role, if not, treat as new user needing role selection
@@ -287,7 +240,7 @@ router.post('/api/auth/google', async (req, res) => {
         // Additional diagnostics
         if (err.message.includes('audience')) {
             console.error('⚠️ AUDIENCE MISMATCH - Token from different Client ID');
-            console.error('Expected audience:', process.env.GOOGLE_CLIENT_ID || '3074679378-fbmg47osjqajq7u4cv0qja7svo00pv3m.apps.googleusercontent.com');
+            console.error('Expected audience:', googleClientId);
         }
         
         res.status(401).json({ 

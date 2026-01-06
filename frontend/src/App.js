@@ -1,5 +1,4 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { GoogleOAuthProvider } from '@react-oauth/google';
 import HomePage from './pages/HomePage';
 import RegisterPage from './pages/RegisterPage';
 import LoginPage from './pages/LoginPage';
@@ -35,6 +34,7 @@ import ResearchDatasetPage from './pages/ResearchDatasetPage';
 import LearnMorePage from './pages/LearnMorePage';
 import VoiceScreeningPage from './pages/VoiceScreeningPage';
 import MRIScreeningPage from './pages/MRIScreeningPage';
+import GazeSnapshotCapture from './components/GazeSnapshotCapture';
 import QuestionnairePage from './pages/QuestionnairePage';
 import HowItWorksPage from './pages/HowItWorksPage';
 import FeaturesPage from './pages/FeaturesPage';
@@ -49,11 +49,8 @@ import ParentSettingsPage from './pages/ParentSettingsPage';
 import PaymentPage from './pages/PaymentPage';
 
 function App() {
-  const googleClientId = "3074679378-fbmg47osjqajq7u4cv0qja7svo00pv3m.apps.googleusercontent.com";
-
   return (
-    <GoogleOAuthProvider clientId={googleClientId}>
-      <Router>
+    <Router>
         <Routes>
           {/* Public Routes */}
           <Route path="/" element={<HomePage />} />
@@ -67,6 +64,7 @@ function App() {
           {/* Public Screening & Info Routes */}
           <Route path="/voice-screening" element={<VoiceScreeningPage />} />
           <Route path="/mri-screening" element={<MRIScreeningPage />} />
+          <Route path="/live-gaze-analysis" element={<GazeSnapshotCapture />} />
           <Route path="/questionnaire" element={<QuestionnairePage />} />
           <Route path="/how-it-works" element={<HowItWorksPage />} />
           <Route path="/learn-more" element={<LearnMorePage />} />
@@ -138,7 +136,6 @@ function App() {
           <Route path="*" element={<h1 className="text-center mt-20 text-2xl">404 - Page Not Found</h1>} />
         </Routes>
       </Router>
-    </GoogleOAuthProvider>
   );
 }
 

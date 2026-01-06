@@ -2,6 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FiHome, FiUsers, FiFileText, FiSettings, FiLogOut, FiCalendar, FiHelpCircle, FiX } from 'react-icons/fi';
 import ProgressTracker from '../components/ProgressTracker';
+import ProgressChart from '../components/ProgressChart';
+import BehavioralMetrics from '../components/BehavioralMetrics';
+import AppointmentManager from '../components/AppointmentManager';
 import './TherapistDashboard.css';
 
 const Sidebar = ({ activeNav, onNavClick, onLogout, therapistName }) => {
@@ -48,6 +51,15 @@ const Sidebar = ({ activeNav, onNavClick, onLogout, therapistName }) => {
 };
 
 const MainContent = ({ username, therapistName, appointments, clients, loading, onOpenAssistant }) => {
+  const [selectedPatientId, setSelectedPatientId] = useState(null);
+  const [selectedSessionId, setSelectedSessionId] = useState(null);
+  
+  useEffect(() => {
+    if (Array.isArray(clients) && clients.length > 0 && !selectedPatientId) {
+      setSelectedPatientId(clients[0]._id || clients[0].id);
+    }
+  }, [clients, selectedPatientId]);
+  
   const upcomingAppointments = Array.isArray(appointments) 
     ? appointments.filter(a => a.status === 'Scheduled' || a.status === 'Pending').slice(0, 3)
     : [];
@@ -144,6 +156,58 @@ const MainContent = ({ username, therapistName, appointments, clients, loading, 
             ))
           )}
         </div>
+      </div>
+
+      {/* Patient Selection for DREAM Dataset Analysis */}
+      <div className="content-section">
+        <div className="section-header">
+          <h2 className="section-title">DREAM Dataset Analysis</h2>
+          <div className="patient-selector">
+            <label htmlFor="patient-select" className="patient-selector-label">
+              Select Patient:
+            </label>
+            <select
+              id="patient-select"
+              className="patient-selector-input"
+              value={selectedPatientId || ''}
+              onChange={(e) => setSelectedPatientId(e.target.value)}
+            >
+              {Array.isArray(clients) && clients.length > 0 ? (
+                clients.map((client) => (
+                  <option key={client._id || client.id} value={client._id || client.id}>
+                    {client.name} {client.age ? `(${client.age}y)` : ''}
+                  </option>
+                ))
+              ) : (
+                <option disabled>No patients available</option>
+              )}
+            </select>
+          </div>
+        </div>
+
+        {selectedPatientId && (
+          <>
+            {/* Behavioral Metrics */}
+            <div className="metrics-section">
+              <BehavioralMetrics patientId={selectedPatientId} sessionId={selectedSessionId} />
+            </div>
+
+            {/* Progress Chart */}
+            <div className="progress-section">
+              <ProgressChart patientId={selectedPatientId} metric="gaze" />
+            </div>
+
+            {/* Motor Activity Chart */}
+            <div className="progress-section">
+              <ProgressChart patientId={selectedPatientId} metric="kinematic" />
+            </div>
+
+            {/* Session Management */}
+            <div className="session-management-section">
+              <AppointmentManager patientId={selectedPatientId} />
+            </div>
+          </>
+        )}
       </div>
 
       {/* Progress Tracker Section */}

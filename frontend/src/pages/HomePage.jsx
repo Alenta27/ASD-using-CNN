@@ -199,8 +199,8 @@ const Homepage = () => {
             <p className="text-lg text-gray-200 mb-8">
               Get a free, confidential screening today and gain valuable insights.
             </p>
-            {/* CTA Buttons: Facial, Voice, and MRI Screening */}
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            {/* CTA Buttons: Facial, Voice, MRI, and Live Gaze Screening */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 flex-wrap">
               <Link to="/screening">
                 <button className="bg-blue-600 text-white font-semibold py-3 px-8 rounded-lg hover:bg-blue-700 transition duration-300 text-lg w-full sm:w-auto">
                   Facial Screening
@@ -214,6 +214,11 @@ const Homepage = () => {
               <Link to="/mri-screening">
                 <button className="bg-black text-white font-semibold py-3 px-8 rounded-lg hover:bg-gray-800 transition duration-300 text-lg w-full sm:w-auto">
                   MRI Screening
+                </button>
+              </Link>
+              <Link to="/live-gaze-analysis">
+                <button className="bg-purple-600 text-white font-semibold py-3 px-8 rounded-lg hover:bg-purple-700 transition duration-300 text-lg w-full sm:w-auto">
+                  Live Gaze Analysis
                 </button>
               </Link>
             </div>
