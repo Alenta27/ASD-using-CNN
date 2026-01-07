@@ -156,6 +156,9 @@ const TherapistPatientsPage = () => {
                     <button className="btn-secondary" onClick={() => navigate('/therapist/appointments')}>
                       View Appointments
                     </button>
+                    <button className="btn-success" onClick={() => navigate(`/live-gaze-analysis?patientId=${patient._id}`)} style={{ backgroundColor: '#10b981', color: 'white', marginTop: '10px' }}>
+                      Start Live Gaze
+                    </button>
                   </div>
                 </div>
               ))}

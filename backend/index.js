@@ -6,7 +6,33 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const mongoose = require('mongoose');
 
+const http = require('http');
+const { Server } = require('socket.io');
+
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || '*',
+    methods: ['GET', 'POST']
+  }
+});
+
+// Make io accessible in routes
+app.set('io', io);
+
+io.on('connection', (socket) => {
+  console.log('🔌 Client connected to socket:', socket.id);
+  
+  socket.on('join-session', (sessionId) => {
+    socket.join(sessionId);
+    console.log(`👤 Client joined session room: ${sessionId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('🔌 Client disconnected');
+  });
+});
 
 // ✅ Simplified CORS for localhost & deployed front-end
 app.use(cors({
@@ -27,6 +53,7 @@ const credentialsDir = path.join(__dirname, 'credentials');
 if (!fs.existsSync(credentialsDir)) fs.mkdirSync(credentialsDir, { recursive: true });
 
 app.use('/credentials', express.static(credentialsDir));
+app.use('/uploads/gaze', express.static(path.join(__dirname, 'uploads/gaze')));
 
 // ✅ Health Check Route (Render Requirement)
 app.get('/api/health', (req, res) => {
@@ -82,76 +109,12 @@ try {
   console.error('Predict Routes Error:', e.message);
 }
 
-// ✅ Gaze Analysis from base64 (JSON) -> uses Python module via stdin to avoid arg length limits
-app.post('/api/gaze/analyze', async (req, res) => {
-  try {
-    const { imageBase64 } = req.body || {};
-    if (!imageBase64 || typeof imageBase64 !== 'string') {
-      return res.status(400).json({ error: 'imageBase64 is required' });
-    }
-
-    const pythonCode = `
-import sys, json
-from gaze_analysis import analyze_gaze_from_base64
-base64_data = sys.stdin.read()
-result = analyze_gaze_from_base64(base64_data)
-print(json.dumps(result))
-`;
-
-    const python = spawn('python', ['-c', pythonCode], {
-      cwd: __dirname,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    python.stdout.on('data', (d) => { stdout += d.toString(); });
-    python.stderr.on('data', (d) => { stderr += d.toString(); });
-
-    // Write the base64 payload to Python stdin
-    python.stdin.write(imageBase64);
-    python.stdin.end();
-
-    const timeout = setTimeout(() => {
-      python.kill();
-      console.error('Python gaze analysis timeout after 30s');
-      return res.status(500).json({ error: 'Gaze analysis timed out' });
-    }, 30000);
-
-    python.on('close', (code) => {
-      clearTimeout(timeout);
-      if (stderr) {
-        console.error('Python gaze stderr:', stderr);
-      }
-      if (!stdout.trim()) {
-        return res.status(500).json({ error: 'No output from gaze analysis process' });
-      }
-      try {
-        const result = JSON.parse(stdout.trim());
-        // Return 200 with JSON even if it contains an error to avoid fetch network errors
-        if (result && result.error) {
-          return res.status(200).json({ error: result.error });
-        }
-        return res.status(200).json({
-          gaze_direction: result.gaze_direction,
-          attention_score: result.attention_score,
-        });
-      } catch (err) {
-        console.error('Failed to parse Python gaze output:', err, 'raw:', stdout);
-        return res.status(500).json({ error: 'Failed to parse gaze analysis response' });
-      }
-    });
-
-    python.on('error', (err) => {
-      console.error('Failed to start Python for gaze:', err);
-      return res.status(500).json({ error: 'Gaze analysis process failed: ' + err.message });
-    });
-  } catch (err) {
-    console.error('Gaze analyze route error:', err);
-    return res.status(500).json({ error: 'Gaze analysis failed: ' + err.message });
-  }
-});
+// ✅ Gaze Live Session Routes
+try {
+  app.use('/api/gaze', require('./routes/gaze'));
+} catch (e) {
+  console.error('Gaze Routes Error:', e.message);
+}
 
 // ✅ MRI Scan Model: accept file upload and return stub JSON
 const multer = require('multer');
@@ -205,7 +168,7 @@ app.post('/api/predict-gaze-snapshot', upload.single('file'), async (req, res) =
     console.log('📝 Worker exists:', fs.existsSync(gazeWorkerPath));
 
     return new Promise((resolve) => {
-      const pythonProcess = spawn('python', [gazeWorkerPath, imagePath], {
+      const pythonProcess = spawn('py', ['-3.10', gazeWorkerPath, imagePath], {
         stdio: ['pipe', 'pipe', 'pipe']
       });
 
@@ -222,7 +185,7 @@ app.post('/api/predict-gaze-snapshot', upload.single('file'), async (req, res) =
 
       const timeout = setTimeout(() => {
         pythonProcess.kill();
-        console.error('Python process timeout after 30 seconds');
+        console.error('Python process timeout after 60 seconds');
         resolve(res.status(500).json({
           error: 'Gaze analysis timed out',
           gaze_direction: 'unknown',
@@ -230,7 +193,7 @@ app.post('/api/predict-gaze-snapshot', upload.single('file'), async (req, res) =
           head_pitch: 0,
           head_yaw: 0,
         }));
-      }, 30000);
+      }, 60000);
 
       pythonProcess.on('close', (code) => {
         clearTimeout(timeout);
@@ -336,7 +299,7 @@ app.get('/', (req, res) => {
     res.status(404).json({ error: 'Not found' });
   });
 
-  app.listen(PORT, () => console.log(`🚀 Server Live on Port ${PORT}`));
+  server.listen(PORT, () => console.log(`🚀 Server Live on Port ${PORT}`));
 }
 
 start();

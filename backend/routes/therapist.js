@@ -7,6 +7,7 @@ const Patient = require('../models/patient');
 const Report = require('../models/report');
 const Slot = require('../models/slot');
 const Appointment = require('../models/appointment');
+const GazeSession = require('../models/GazeSession');
 const DREAMFeatures = require('../models/dreamFeatures');
 const multer = require('multer');
 const path = require('path');
@@ -390,7 +391,18 @@ router.put('/calendar/availability', async (req, res) => {
   }
 });
 
-// Get billing information
+// Get gaze session details
+router.get('/sessions/:sessionId', async (req, res) => {
+  try {
+    const session = await GazeSession.findById(req.params.sessionId).populate('patientId', 'name age gender');
+    if (!session) return res.status(404).json({ message: 'Session not found' });
+    res.json(session);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update billing information
 router.get('/billing', async (req, res) => {
   try {
     const billing = {

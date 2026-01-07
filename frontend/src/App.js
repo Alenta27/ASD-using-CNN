@@ -35,6 +35,7 @@ import LearnMorePage from './pages/LearnMorePage';
 import VoiceScreeningPage from './pages/VoiceScreeningPage';
 import MRIScreeningPage from './pages/MRIScreeningPage';
 import GazeSnapshotCapture from './components/GazeSnapshotCapture';
+import GazeDashboard from './pages/GazeDashboard';
 import QuestionnairePage from './pages/QuestionnairePage';
 import HowItWorksPage from './pages/HowItWorksPage';
 import FeaturesPage from './pages/FeaturesPage';
@@ -106,6 +107,7 @@ function App() {
           <Route path="/therapist/session-notes" element={<TherapistDashboard />} />
           <Route path="/therapist/notifications" element={<TherapistDashboard />} />
           <Route path="/therapist/settings" element={<TherapistDashboard />} />
+          <Route path="/therapist/gaze-sessions" element={<GazeDashboard />} />
           <Route path="/research" element={<ResearchDashboard />} />
           <Route path="/research/users" element={<ResearchUsersPage />} />
           <Route path="/research/screenings" element={<ResearchDashboard />} />
