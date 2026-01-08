@@ -8,8 +8,10 @@ import './TherapistDashboard.css';
 const GazeDashboard = () => {
   const navigate = useNavigate();
   const [activeSessions, setActiveSessions] = useState([]);
+  const [pendingReviewSessions, setPendingReviewSessions] = useState([]);
   const [selectedSession, setSelectedSession] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState('live'); // 'live' or 'review'
   const [error, setError] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
   const [observations, setObservations] = useState({}); // { snapshotId: notes }
@@ -44,12 +46,22 @@ const GazeDashboard = () => {
   const fetchActiveSessions = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:5000/api/gaze/sessions/active', {
+      // Fetch Live Sessions
+      const liveRes = await fetch('http://localhost:5000/api/gaze/sessions/active', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        const data = await response.json();
+      if (liveRes.ok) {
+        const data = await liveRes.json();
         setActiveSessions(data);
+      }
+
+      // Fetch Pending Review Sessions
+      const reviewRes = await fetch('http://localhost:5000/api/gaze/sessions/pending-review', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (reviewRes.ok) {
+        const data = await reviewRes.json();
+        setPendingReviewSessions(data);
       }
     } catch (err) {
       console.error("Failed to fetch sessions:", err);
@@ -120,6 +132,40 @@ const GazeDashboard = () => {
     }
   };
 
+  const handleCreateReport = async (title) => {
+    try {
+      if (!selectedSession.patientId?._id && !selectedSession.isGuest) {
+        alert("Cannot create report: Patient ID missing.");
+        return;
+      }
+
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://localhost:5000/api/therapist/reports', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          patientId: selectedSession.patientId?._id || null,
+          guestSessionId: selectedSession.isGuest ? selectedSession._id : null,
+          title: title,
+          status: 'final'
+        })
+      });
+
+      if (response.ok) {
+        alert("Report created successfully");
+      } else {
+        const data = await response.json();
+        alert(`Failed to create report: ${data.message || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error("Failed to create report:", err);
+      alert("Error creating report");
+    }
+  };
+
   return (
     <div className="therapist-dashboard-page">
       {/* Sidebar - Reusing existing styles */}
@@ -158,23 +204,43 @@ const GazeDashboard = () => {
             
             {/* Left Column: Active Sessions */}
             <div className="sessions-list" style={{ backgroundColor: '#fff', borderRadius: '15px', padding: '20px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-              <h3 style={{ marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <FiActivity color="#4f46e5" /> Active Sessions
+              <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '1px solid #eee', paddingBottom: '10px' }}>
+                <button 
+                  onClick={() => setViewMode('live')}
+                  style={{ 
+                    flex: 1, padding: '8px', borderRadius: '8px', border: 'none', 
+                    backgroundColor: viewMode === 'live' ? '#4f46e5' : '#f3f4f6',
+                    color: viewMode === 'live' ? '#fff' : '#4b5563',
+                    fontSize: '12px', fontWeight: 'bold', cursor: 'pointer'
+                  }}
+                >
+                  Live
+                </button>
+                <button 
+                  onClick={() => setViewMode('review')}
+                  style={{ 
+                    flex: 1, padding: '8px', borderRadius: '8px', border: 'none', 
+                    backgroundColor: viewMode === 'review' ? '#4f46e5' : '#f3f4f6',
+                    color: viewMode === 'review' ? '#fff' : '#4b5563',
+                    fontSize: '12px', fontWeight: 'bold', cursor: 'pointer'
+                  }}
+                >
+                  Review ({pendingReviewSessions.length})
+                </button>
+              </div>
+
+              <h3 style={{ marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '16px' }}>
+                {viewMode === 'live' ? <FiActivity color="#4f46e5" /> : <FiFileText color="#4f46e5" />} 
+                {viewMode === 'live' ? 'Live Sessions' : 'Pending Review'}
               </h3>
               
-              {loading ? <p>Loading sessions...</p> : activeSessions.length === 0 ? (
+              {loading ? <p>Loading...</p> : (viewMode === 'live' ? activeSessions : pendingReviewSessions).length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
-                  <p>No active sessions found.</p>
-                  <button 
-                    onClick={() => navigate('/therapist/patients')}
-                    style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: '#4f46e5', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-                  >
-                    Start a Session
-                  </button>
+                  <p>No sessions found.</p>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {activeSessions.map(session => (
+                  {(viewMode === 'live' ? activeSessions : pendingReviewSessions).map(session => (
                     <div 
                       key={session._id}
                       onClick={() => setSelectedSession(session)}
@@ -187,13 +253,27 @@ const GazeDashboard = () => {
                         transition: 'all 0.2s'
                       }}
                     >
-                      <p style={{ fontWeight: 'bold', margin: '0 0 5px 0' }}>{session.patientId?.name || 'Unknown Patient'}</p>
-                      <p style={{ fontSize: '12px', color: '#666', margin: 0 }}>
-                        <FiClock size={10} /> Started: {new Date(session.startTime).toLocaleTimeString()}
-                      </p>
-                      <p style={{ fontSize: '12px', color: '#4f46e5', margin: '5px 0 0 0', fontWeight: 'bold' }}>
-                        {session.snapshots?.length || 0} Snapshots captured
-                      </p>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <p style={{ fontWeight: 'bold', margin: '0 0 5px 0' }}>
+                          {session.isGuest ? (session.guestInfo?.childName || 'Guest') : (session.patientId?.name || 'Unknown Patient')}
+                        </p>
+                        {session.isGuest && (
+                          <span style={{ fontSize: '9px', backgroundColor: '#e0e7ff', color: '#4338ca', padding: '1px 4px', borderRadius: '4px', fontWeight: 'bold' }}>GUEST</span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <p style={{ fontSize: '11px', color: '#666', margin: 0 }}>
+                          <FiClock size={10} /> {new Date(session.startTime).toLocaleDateString()}
+                        </p>
+                        <span style={{ 
+                          fontSize: '10px', padding: '2px 6px', borderRadius: '10px', 
+                          backgroundColor: session.status === 'active' ? '#dcfce7' : '#fef3c7',
+                          color: session.status === 'active' ? '#166534' : '#92400e',
+                          fontWeight: 'bold'
+                        }}>
+                          {session.status.toUpperCase()}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -211,11 +291,47 @@ const GazeDashboard = () => {
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid #eee', paddingBottom: '15px' }}>
                     <div>
-                      <h2 style={{ margin: 0 }}>{selectedSession.patientId?.name}</h2>
-                      <p style={{ color: '#666', margin: '5px 0 0 0' }}>Session ID: {selectedSession._id}</p>
+                      <h2 style={{ margin: 0 }}>
+                        {selectedSession.isGuest ? selectedSession.guestInfo?.childName : selectedSession.patientId?.name}
+                        {selectedSession.isGuest && <span style={{ marginLeft: '10px', fontSize: '12px', verticalAlign: 'middle', backgroundColor: '#e0e7ff', color: '#4338ca', padding: '2px 8px', borderRadius: '10px' }}>Guest Session</span>}
+                      </h2>
+                      <p style={{ color: '#666', margin: '5px 0 0 0' }}>
+                        {selectedSession.isGuest ? `Parent: ${selectedSession.guestInfo?.parentName} | Email: ${selectedSession.guestInfo?.email}` : `Session ID: ${selectedSession._id}`}
+                      </p>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <span style={{ backgroundColor: '#10b981', color: '#fff', padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' }}>LIVE</span>
+                    <div style={{ textAlign: 'right', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      {!selectedSession.isGuest && (
+                        <button 
+                          onClick={() => navigate('/therapist/slots', { state: { patientId: selectedSession.patientId?._id } })}
+                          style={{ 
+                            backgroundColor: '#4f46e5', color: '#fff', border: 'none', 
+                            padding: '8px 15px', borderRadius: '8px', fontSize: '12px', 
+                            fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px'
+                          }}
+                        >
+                          <FiCalendar size={14} /> Schedule Appointment
+                        </button>
+                      )}
+                      <button 
+                        onClick={() => {
+                          const name = selectedSession.isGuest ? selectedSession.guestInfo?.childName : selectedSession.patientId?.name;
+                          const title = prompt("Enter Report Title:", `Gaze Analysis Report - ${name}`);
+                          if (title) handleCreateReport(title);
+                        }}
+                        style={{ 
+                          backgroundColor: '#10b981', color: '#fff', border: 'none', 
+                          padding: '8px 15px', borderRadius: '8px', fontSize: '12px', 
+                          fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px'
+                        }}
+                      >
+                        <FiFileText size={14} /> Create Report
+                      </button>
+                      <span style={{ 
+                        backgroundColor: selectedSession.status === 'active' ? '#10b981' : '#f59e0b', 
+                        color: '#fff', padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' 
+                      }}>
+                        {selectedSession.status === 'active' ? 'LIVE' : 'PENDING REVIEW'}
+                      </span>
                     </div>
                   </div>
 

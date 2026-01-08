@@ -1069,6 +1069,34 @@ router.get('/behavioral-metrics/:patientId', requireResourceAccess('children'), 
   }
 });
 
+// Create a report for a student (Therapist version)
+router.post('/reports', async (req, res) => {
+  try {
+    const { patientId, title, status } = req.body;
+    
+    // Verify the student exists and is accessible by this therapist
+    const student = await Patient.findById(patientId);
+    
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found.' });
+    }
+
+    const reportData = {
+      patientId,
+      title: title || `Gaze Analysis Report - ${student.name}`,
+      status: status || 'final',
+      teacherId: req.user.id // We use teacherId field as defined in the model, but it stores the creator ID
+    };
+    
+    const report = new Report(reportData);
+    await report.save();
+    res.status(201).json(report);
+  } catch (error) {
+    console.error('Error creating report:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Complete Session - Mark Appointment as Completed with Notes
 router.post('/appointments/complete-session', requireResourceAccess('appointments'), async (req, res) => {
   try {

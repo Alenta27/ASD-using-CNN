@@ -51,7 +51,11 @@ async function handleSnapshotUpload(req, res, sessionId, analyze) {
 
     const snapshotData = {
         imagePath: `/uploads/gaze/${req.file.filename}`,
-        timestamp: new Date()
+        timestamp: new Date(),
+        gazeDirection: req.body.gazeDirection || 'unknown',
+        attentionScore: parseFloat(req.body.attentionScore) || 0,
+        headPitch: parseFloat(req.body.headPitch) || 0,
+        headYaw: parseFloat(req.body.headYaw) || 0
     };
 
     if (analyze === 'true') {
@@ -158,15 +162,75 @@ router.post('/analyze', async (req, res) => {
     }
 });
 
-// Start a new gaze analysis session
+// Middleware to allow either authenticated user or guest (via sessionId)
+const verifyGuestOrUser = async (req, res, next) => {
+    // 1. Try Token
+    const authHeader = req.headers['authorization'];
+    if (authHeader) {
+        return verifyToken(req, res, next);
+    }
+
+    // 2. Try Guest Session ID from body or params
+    const sessionId = req.params.sessionId || req.body.sessionId;
+    if (sessionId) {
+        try {
+            const session = await GazeSession.findById(sessionId);
+            if (session && session.isGuest && session.status === 'active') {
+                req.isGuest = true;
+                req.sessionId = sessionId;
+                return next();
+            }
+        } catch (err) {
+            console.error("Guest verification error:", err);
+        }
+    }
+
+    return res.status(401).json({ error: 'Unauthorized: Authentication or Guest Session required' });
+};
+
+// Start a guest gaze analysis session
+router.post('/session/guest/start', async (req, res) => {
+    try {
+        const { childName, parentName, email } = req.body;
+        console.log('🚀 Starting guest session request:', { childName, parentName, email });
+        
+        const session = new GazeSession({
+            isGuest: true,
+            guestInfo: {
+                childName: childName || 'Guest Child',
+                parentName: parentName || 'Guest Parent',
+                email: email || ''
+            },
+            status: 'active',
+            snapshots: []
+        });
+
+        await session.save();
+        console.log('✅ Guest session created:', session._id);
+        res.status(201).json(session);
+    } catch (err) {
+        console.error('❌ Error starting guest gaze session:', err);
+        res.status(500).json({ error: 'Failed to start guest gaze session: ' + err.message });
+    }
+});
+
+// Start a new gaze analysis session (Authenticated)
 router.post('/session/start', verifyToken, async (req, res) => {
     try {
         const { patientId } = req.body;
-        const therapistId = req.user.id;
-
+        
         const patient = await Patient.findById(patientId);
         if (!patient) {
             return res.status(404).json({ error: 'Patient not found' });
+        }
+
+        // If the user is a parent, assign the session to the patient's assigned therapist
+        let therapistId = req.user.id;
+        if (req.user.role === 'parent') {
+            if (!patient.therapist_user_id) {
+                return res.status(400).json({ error: 'No therapist assigned to this patient. Please contact support.' });
+            }
+            therapistId = patient.therapist_user_id;
         }
 
         const session = new GazeSession({
@@ -185,7 +249,7 @@ router.post('/session/start', verifyToken, async (req, res) => {
 });
 
 // Upload a snapshot to an active session
-router.post('/snapshot/:sessionId', verifyToken, upload.single('image'), async (req, res) => {
+router.post('/snapshot/:sessionId', verifyGuestOrUser, upload.single('image'), async (req, res) => {
     try {
         const result = await handleSnapshotUpload(req, res, req.params.sessionId, req.body.analyze);
         if (result) res.status(200).json(result);
@@ -196,7 +260,7 @@ router.post('/snapshot/:sessionId', verifyToken, upload.single('image'), async (
 });
 
 // Alias for snapshot upload to match user request
-router.post('/session/snapshot', verifyToken, upload.single('image'), async (req, res) => {
+router.post('/session/snapshot', verifyGuestOrUser, upload.single('image'), async (req, res) => {
     try {
         const { sessionId, analyze } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
@@ -210,7 +274,7 @@ router.post('/session/snapshot', verifyToken, upload.single('image'), async (req
 });
 
 // Alias for snapshot upload to match user request (legacy/extra)
-router.post('/upload', verifyToken, upload.single('image'), async (req, res) => {
+router.post('/upload', verifyGuestOrUser, upload.single('image'), async (req, res) => {
     try {
         const { sessionId, analyze } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
@@ -220,6 +284,59 @@ router.post('/upload', verifyToken, upload.single('image'), async (req, res) => 
     } catch (err) {
         console.error('Error uploading gaze snapshot:', err);
         res.status(500).json({ error: 'Failed to upload snapshot' });
+    }
+});
+
+// Send session for review (bulk upload)
+router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
+    try {
+        const { sessionId, snapshots, endTime } = req.body;
+        console.log(`📩 Received send-for-review for session: ${sessionId}, snapshots provided: ${snapshots?.length || 0}`);
+
+        if (!sessionId) {
+            return res.status(400).json({ error: 'Missing session ID' });
+        }
+
+        const session = await GazeSession.findById(sessionId);
+        if (!session) {
+            console.error(`❌ Session ${sessionId} not found`);
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        // Save each snapshot image to disk and add to session (if provided)
+        if (snapshots && Array.isArray(snapshots) && snapshots.length > 0) {
+            const processedSnapshots = [];
+            
+            for (const snap of snapshots) {
+                try {
+                    const base64Data = snap.image.replace(/^data:image\/\w+;base64,/, "");
+                    const filename = `gaze-${Date.now()}-${Math.round(Math.random() * 1E9)}.png`;
+                    const filePath = path.join(gazeUploadsDir, filename);
+                    
+                    fs.writeFileSync(filePath, base64Data, 'base64');
+                    
+                    processedSnapshots.push({
+                        imagePath: `/uploads/gaze/${filename}`,
+                        timestamp: snap.timestamp || new Date(),
+                        attentionScore: snap.attentionScore || 0,
+                        gazeDirection: snap.gazeDirection || 'unknown'
+                    });
+                } catch (err) {
+                    console.error(`❌ Error processing snapshot:`, err.message);
+                }
+            }
+
+            console.log(`✅ Processed ${processedSnapshots.length} additional snapshots for session ${sessionId}`);
+            session.snapshots.push(...processedSnapshots);
+        }
+        session.status = 'pending_review';
+        session.endTime = endTime || new Date();
+        await session.save();
+
+        res.status(200).json({ message: 'Session submitted for review', session });
+    } catch (err) {
+        console.error('❌ Error sending for review:', err);
+        res.status(500).json({ error: 'Failed to submit session for review: ' + err.message });
     }
 });
 
@@ -248,6 +365,23 @@ router.get('/sessions/active', verifyToken, therapistCheck, async (req, res) => 
         res.status(200).json(sessions);
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch active sessions' });
+    }
+});
+
+// Get sessions pending review for a therapist
+router.get('/sessions/pending-review', verifyToken, therapistCheck, async (req, res) => {
+    try {
+        const sessions = await GazeSession.find({ 
+            $or: [
+                { therapistId: req.user.id },
+                { isGuest: true }
+            ],
+            status: 'pending_review'
+        }).populate('patientId', 'name age gender');
+        res.status(200).json(sessions);
+    } catch (err) {
+        console.error('Error fetching pending review sessions:', err);
+        res.status(500).json({ error: 'Failed to fetch pending review sessions' });
     }
 });
 

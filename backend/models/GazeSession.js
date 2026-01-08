@@ -11,9 +11,15 @@ const gazeSnapshotSchema = new mongoose.Schema({
 });
 
 const gazeSessionSchema = new mongoose.Schema({
-    patientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Patient', required: true },
-    therapistId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    status: { type: String, enum: ['active', 'completed'], default: 'active' },
+    patientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Patient', required: false },
+    therapistId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: false },
+    isGuest: { type: Boolean, default: false },
+    guestInfo: {
+        childName: { type: String },
+        parentName: { type: String },
+        email: { type: String }
+    },
+    status: { type: String, enum: ['active', 'completed', 'pending_review', 'reviewed'], default: 'active' },
     snapshots: [gazeSnapshotSchema],
     startTime: { type: Date, default: Date.now },
     endTime: { type: Date }
