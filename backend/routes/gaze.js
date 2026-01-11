@@ -36,12 +36,15 @@ const upload = multer({
 
 // Shared logic for snapshot upload
 async function handleSnapshotUpload(req, res, sessionId, analyze) {
+    console.log(`📸 Handling snapshot upload for session: ${sessionId}`);
     if (!req.file) {
+        console.error('❌ No file received in handleSnapshotUpload');
         return res.status(400).json({ error: 'No image uploaded' });
     }
 
     const session = await GazeSession.findById(sessionId);
     if (!session) {
+        console.error(`❌ Session ${sessionId} not found`);
         return res.status(404).json({ error: 'Session not found' });
     }
 
@@ -55,7 +58,8 @@ async function handleSnapshotUpload(req, res, sessionId, analyze) {
         gazeDirection: req.body.gazeDirection || 'unknown',
         attentionScore: parseFloat(req.body.attentionScore) || 0,
         headPitch: parseFloat(req.body.headPitch) || 0,
-        headYaw: parseFloat(req.body.headYaw) || 0
+        headYaw: parseFloat(req.body.headYaw) || 0,
+        sessionId: sessionId.toString()
     };
 
     if (analyze === 'true') {
@@ -170,8 +174,10 @@ const verifyGuestOrUser = async (req, res, next) => {
         return verifyToken(req, res, next);
     }
 
-    // 2. Try Guest Session ID from body or params
-    const sessionId = req.params.sessionId || req.body.sessionId;
+    // 2. Try Guest Session ID from body or params or query
+    const sessionId = req.params.sessionId || req.body.sessionId || req.query.sessionId;
+    console.log(`🔍 Verifying access for sessionId: ${sessionId}`);
+
     if (sessionId) {
         try {
             const session = await GazeSession.findById(sessionId);
@@ -179,12 +185,15 @@ const verifyGuestOrUser = async (req, res, next) => {
                 req.isGuest = true;
                 req.sessionId = sessionId;
                 return next();
+            } else if (session) {
+                console.log(`⚠️ Session found but not eligible. Guest: ${session.isGuest}, Status: ${session.status}`);
             }
         } catch (err) {
             console.error("Guest verification error:", err);
         }
     }
 
+    console.log('❌ Guest verification failed');
     return res.status(401).json({ error: 'Unauthorized: Authentication or Guest Session required' });
 };
 
@@ -291,7 +300,8 @@ router.post('/upload', verifyGuestOrUser, upload.single('image'), async (req, re
 router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
     try {
         const { sessionId, snapshots, endTime } = req.body;
-        console.log(`📩 Received send-for-review for session: ${sessionId}, snapshots provided: ${snapshots?.length || 0}`);
+        console.log(`📩 Received send-for-review for session: ${sessionId}`);
+        console.log(`📦 Snapshots in request: ${snapshots ? snapshots.length : 0}`);
 
         if (!sessionId) {
             return res.status(400).json({ error: 'Missing session ID' });
@@ -299,16 +309,28 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
 
         const session = await GazeSession.findById(sessionId);
         if (!session) {
-            console.error(`❌ Session ${sessionId} not found`);
+            console.error(`❌ Session ${sessionId} not found in send-for-review`);
             return res.status(404).json({ error: 'Session not found' });
         }
 
         // Save each snapshot image to disk and add to session (if provided)
         if (snapshots && Array.isArray(snapshots) && snapshots.length > 0) {
+            console.log(`💾 Processing ${snapshots.length} snapshots for session ${sessionId}`);
             const processedSnapshots = [];
             
             for (const snap of snapshots) {
                 try {
+                    // Avoid duplicating snapshots that might have been uploaded live
+                    const isDuplicate = session.snapshots.some(existing => 
+                        existing.timestamp && snap.timestamp && 
+                        new Date(existing.timestamp).getTime() === new Date(snap.timestamp).getTime()
+                    );
+                    
+                    if (isDuplicate) {
+                        console.log(`⏭️ Skipping duplicate snapshot from ${snap.timestamp}`);
+                        continue;
+                    }
+
                     const base64Data = snap.image.replace(/^data:image\/\w+;base64,/, "");
                     const filename = `gaze-${Date.now()}-${Math.round(Math.random() * 1E9)}.png`;
                     const filePath = path.join(gazeUploadsDir, filename);
@@ -326,16 +348,18 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
                 }
             }
 
-            console.log(`✅ Processed ${processedSnapshots.length} additional snapshots for session ${sessionId}`);
+            console.log(`✅ Processed ${processedSnapshots.length} snapshots for session ${sessionId}`);
             session.snapshots.push(...processedSnapshots);
         }
+        
         session.status = 'pending_review';
         session.endTime = endTime || new Date();
         await session.save();
+        console.log(`✅ Session ${sessionId} updated to pending_review`);
 
         res.status(200).json({ message: 'Session submitted for review', session });
     } catch (err) {
-        console.error('❌ Error sending for review:', err);
+        console.error('❌ Error in send-for-review:', err);
         res.status(500).json({ error: 'Failed to submit session for review: ' + err.message });
     }
 });
@@ -359,7 +383,10 @@ router.post('/session/end/:sessionId', verifyToken, async (req, res) => {
 router.get('/sessions/active', verifyToken, therapistCheck, async (req, res) => {
     try {
         const sessions = await GazeSession.find({ 
-            therapistId: req.user.id,
+            $or: [
+                { therapistId: req.user.id },
+                { isGuest: true }
+            ],
             status: 'active'
         }).populate('patientId', 'name');
         res.status(200).json(sessions);
@@ -376,7 +403,7 @@ router.get('/sessions/pending-review', verifyToken, therapistCheck, async (req, 
                 { therapistId: req.user.id },
                 { isGuest: true }
             ],
-            status: 'pending_review'
+            status: { $in: ['pending_review', 'completed'] }
         }).populate('patientId', 'name age gender');
         res.status(200).json(sessions);
     } catch (err) {

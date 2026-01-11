@@ -125,6 +125,15 @@ const GazeSnapshotCapture = () => {
     }
   };
 
+  const dataURLtoBlob = (dataurl) => {
+    let arr = dataurl.split(','), mime = arr[0].match(/:(.*?);/)[1],
+        bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
+    while(n--){
+        u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], {type:mime});
+  };
+
   const captureAndUpload = async () => {
     if (webcamRef.current) {
       const imageSrc = webcamRef.current.getScreenshot();
@@ -157,8 +166,7 @@ const GazeSnapshotCapture = () => {
           // 2. SEND LIVE TO THERAPIST DASHBOARD
           if (sessionId) {
             try {
-              const res = await fetch(imageSrc);
-              const blob = await res.blob();
+              const blob = dataURLtoBlob(imageSrc);
               const formData = new FormData();
               formData.append('image', blob, `auto-${Date.now()}.png`);
               formData.append('analyze', 'false'); // Already analyzed
@@ -287,8 +295,7 @@ const GazeSnapshotCapture = () => {
 
       // 2. If a session is active, upload to therapist dashboard live
       if (sessionId) {
-        const res = await fetch(snapshot);
-        const blob = await res.blob();
+        const blob = dataURLtoBlob(snapshot);
         const formData = new FormData();
         formData.append('image', blob, 'manual-snapshot.png');
         formData.append('analyze', 'false');

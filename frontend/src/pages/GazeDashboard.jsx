@@ -23,15 +23,28 @@ const GazeDashboard = () => {
     socketRef.current = io('http://localhost:5000');
 
     socketRef.current.on('new-snapshot', (snapshot) => {
+      console.log('🆕 Received new snapshot via socket:', snapshot);
       setSelectedSession(prev => {
         if (!prev) return null;
-        // Check if this snapshot belongs to the current selected session
-        // Note: The backend emits to specific session rooms, so we only get what we need
+        
+        // Only update if the snapshot belongs to the selected session
+        // Note: The socket room already filters this, but extra check doesn't hurt
+        const alreadyExists = prev.snapshots.some(s => s._id === snapshot._id || (s.imagePath === snapshot.imagePath && s.timestamp === snapshot.timestamp));
+        if (alreadyExists) return prev;
+
         return {
           ...prev,
           snapshots: [...prev.snapshots, snapshot]
         };
       });
+      
+      // Update the active sessions list to show new snapshot count if needed
+      setActiveSessions(prev => prev.map(s => {
+        if (s._id === selectedSession?._id || s._id === snapshot.sessionId) {
+          return { ...s, snapshots: [...(s.snapshots || []), snapshot] };
+        }
+        return s;
+      }));
       
       if (snapshot._id) {
         setObservations(prev => ({ ...prev, [snapshot._id]: '' }));
