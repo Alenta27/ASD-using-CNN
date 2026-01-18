@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FiHome, FiUsers, FiClipboard, FiBarChart2, FiSettings, FiLogOut } from 'react-icons/fi';
+import { FiHome, FiUsers, FiClipboard, FiBarChart2, FiSettings, FiLogOut, FiActivity } from 'react-icons/fi';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import ASDRiskEstimator from '../components/ASDRiskEstimator';
 import './TeacherDashboard.css';
@@ -19,6 +19,7 @@ const Sidebar = ({ activeNav, onNavClick, onLogout }) => {
     { id: 'home', label: 'Home', icon: FiHome, path: '/teacher' },
     { id: 'students', label: 'My Students', icon: FiUsers, path: '/teacher/students' },
     { id: 'screenings', label: 'Student Screenings', icon: FiClipboard, path: '/teacher/screenings' },
+    { id: 'assessments', label: 'Behavioral Assessments', icon: FiActivity, path: '/teacher/assessments' },
     { id: 'reports', label: 'Progress Reports', icon: FiBarChart2, path: '/teacher/reports' },
   ];
 
@@ -269,6 +270,7 @@ export default function TeacherDashboard() {
       '/teacher': 'home',
       '/teacher/students': 'students',
       '/teacher/screenings': 'screenings',
+      '/teacher/assessments': 'assessments',
       '/teacher/reports': 'reports',
     };
     let navKey = navMap[path];
@@ -277,6 +279,8 @@ export default function TeacherDashboard() {
         navKey = 'students';
       } else if (path.startsWith('/teacher/screenings')) {
         navKey = 'screenings';
+      } else if (path.startsWith('/teacher/assessments')) {
+        navKey = 'assessments';
       } else if (path.startsWith('/teacher/reports')) {
         navKey = 'reports';
       } else if (path.startsWith('/teacher')) {

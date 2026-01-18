@@ -214,6 +214,19 @@ router.get('/reports', requireResourceAccess('reports'), async (req, res) => {
   }
 });
 
+// Get reports for a specific student
+router.get('/reports/student/:studentId', requireResourceAccess('reports'), async (req, res) => {
+  try {
+    const reports = await Report.find({ 
+      teacherId: req.user.id,
+      patientId: req.params.studentId 
+    }).sort({ createdAt: -1 });
+    res.json(reports);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Create a report for a student
 router.post('/reports', async (req, res) => {
   try {
@@ -230,8 +243,7 @@ router.post('/reports', async (req, res) => {
     const reportData = {
       ...req.body,
       teacherId: req.user.id,
-      studentId: req.body.studentId,
-      studentName: student.name
+      patientId: req.body.studentId,
     };
     
     const report = new Report(reportData);

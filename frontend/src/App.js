@@ -25,6 +25,9 @@ import TeacherStudentsPage from './pages/TeacherStudentsPage';
 import TeacherScreeningsPage from './pages/TeacherScreeningsPage';
 import TeacherReportsPage from './pages/TeacherReportsPage';
 import StudentProfilePage from './pages/StudentProfilePage';
+import TeacherBehavioralAssessmentsPage from './pages/TeacherBehavioralAssessmentsPage';
+import TeacherBehavioralAssessmentDetailPage from './pages/TeacherBehavioralAssessmentDetailPage';
+import BehavioralAnalysisReportPage from './pages/BehavioralAnalysisReportPage';
 import TherapistPatientsPage from './pages/TherapistPatientsPage';
 import TherapistQuestionnairesPage from './pages/TherapistQuestionnairesPage';
 import TherapistSlotManagement from './pages/TherapistSlotManagement';
@@ -128,6 +131,9 @@ function App() {
           <Route path="/teacher/students/:studentId" element={<StudentProfilePage />} />
           <Route path="/teacher/students/:studentId/social-game" element={<SocialResponseGame />} />
           <Route path="/teacher/screenings" element={<TeacherScreeningsPage />} />
+          <Route path="/teacher/assessments" element={<TeacherBehavioralAssessmentsPage />} />
+          <Route path="/teacher/assessments/:toolId" element={<TeacherBehavioralAssessmentDetailPage />} />
+          <Route path="/teacher/assessments/analysis/:studentId" element={<BehavioralAnalysisReportPage />} />
           <Route path="/teacher/reports" element={<TeacherReportsPage />} />
           <Route path="/teacher/insights" element={<TeacherDashboard />} />
           <Route path="/teacher/feedback" element={<TeacherDashboard />} />

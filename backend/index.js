@@ -116,6 +116,13 @@ try {
   console.error('Gaze Routes Error:', e.message);
 }
 
+// ✅ Behavioral Assessment Routes
+try {
+  app.use('/api/behavioral', require('./routes/behavioral'));
+} catch (e) {
+  console.error('Behavioral Routes Error:', e.message);
+}
+
 // ✅ MRI Scan Model: accept file upload and return stub JSON
 const multer = require('multer');
 
