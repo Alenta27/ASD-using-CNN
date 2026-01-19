@@ -29,6 +29,11 @@ const GazeSnapshotCapture = () => {
   const [sessionId, setSessionId] = useState(null);
   const [autoCounter, setAutoCounter] = useState(0);
   const timeoutRef = useRef(null);
+  const [sessionPhase, setSessionPhase] = useState('idle'); // 'idle' | 'recording' | 'ended' | 'submitting'
+  
+  // Attention Scores: Live vs Final
+  const [liveAttentionScore, setLiveAttentionScore] = useState(null);
+  const [finalAttentionScore, setFinalAttentionScore] = useState(null);
 
   // Guest details state
   const [showGuestForm, setShowGuestForm] = useState(false);
@@ -38,6 +43,10 @@ const GazeSnapshotCapture = () => {
     parentName: '',
     email: ''
   });
+  
+  // Success modal state
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [guestSuccessMessage, setGuestSuccessMessage] = useState('');
 
   useEffect(() => {
     // Cleanup timeout on unmount
@@ -60,7 +69,7 @@ const GazeSnapshotCapture = () => {
 
     try {
       const endpoint = patientId ? `${apiBaseUrl}/api/gaze/session/start` : `${apiBaseUrl}/api/gaze/session/guest/start`;
-      const body = patientId ? { patientId } : guestData;
+      const body = patientId ? { patientId } : { ...guestData, sessionType: 'guest_screening' };
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -79,6 +88,10 @@ const GazeSnapshotCapture = () => {
       setCameraActive(true);
       setAutoCounter(0);
       setShowGuestForm(false);
+      setSessionPhase('recording');
+      setLiveAttentionScore(null);
+      setFinalAttentionScore(null);
+      setError(null);
       
       // Start auto capturing
       scheduleNextCapture();
@@ -109,6 +122,16 @@ const GazeSnapshotCapture = () => {
   const stopSession = async () => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     setIsAutoMode(false);
+    setSessionPhase('ended');
+    
+    // Calculate final attention score from all snapshots
+    if (localSnapshots.length > 0) {
+      const scores = localSnapshots.map(s => s.attentionScore).filter(s => s !== undefined);
+      if (scores.length > 0) {
+        const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+        setFinalAttentionScore(avgScore);
+      }
+    }
     
     if (sessionId) {
       try {
@@ -151,6 +174,7 @@ const GazeSnapshotCapture = () => {
         const data = await apiResponse.json();
         
         if (apiResponse.ok) {
+          setLiveAttentionScore(data.attention_score); // Update live score
           setResult(data);
           
           // Store locally for bulk upload if live upload fails or as backup
@@ -199,60 +223,123 @@ const GazeSnapshotCapture = () => {
   };
 
   const sendForReview = async () => {
-    let currentSessionId = sessionId;
-    
-    // If no active session but we have snapshots, start one
-    if (!currentSessionId) {
-      if (!patientId && !guestInfo.childName) {
-        setShowGuestForm(true);
-        return;
-      }
+    // Validate we have data to send
+    if (localSnapshots.length === 0) {
+      setError("No analysis data to send. Please take a snapshot first.");
+      return;
+    }
 
-      if (localSnapshots.length === 0) {
-        setError("No analysis data to send. Please take a snapshot first.");
-        return;
-      }
-      
-      setSending(true);
-      try {
-        currentSessionId = await startSession(token ? null : guestInfo);
+    // For guest mode, ensure form is filled
+    if (!token && (!guestInfo.childName || !guestInfo.parentName || !guestInfo.email)) {
+      setShowGuestForm(true);
+      return;
+    }
+    
+    setSending(true);
+    setSessionPhase('submitting');
+    setError(null); // Clear any previous errors
+    
+    try {
+      // Guest mode: Use dedicated unauthenticated endpoint
+      if (!token) {
+        const response = await fetch(`${apiBaseUrl}/api/guest/live-gaze/submit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            guestInfo: {
+              childName: guestInfo.childName,
+              parentName: guestInfo.parentName,
+              email: guestInfo.email
+            },
+            snapshots: localSnapshots
+          })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Failed to submit session");
+        }
+
+        const result = await response.json();
+        console.log('✅ Guest submission successful:', result.message);
+        
+        // SUCCESS: Only show success state if HTTP 200 and backend confirms
+        setError(null); // Clear any error state
+        setGuestSuccessMessage(result.message);
+        setLocalSnapshots([]);
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
         setIsAutoMode(false);
-      } catch (err) {
+        setSessionId(null);
+        setCameraActive(false);
+        setSessionPhase('idle');
+        setLiveAttentionScore(null);
+        setFinalAttentionScore(null);
+        setResult(null);
+        
+        // Clear message after 8 seconds
+        setTimeout(() => setGuestSuccessMessage(''), 8000);
+        
         setSending(false);
         return;
       }
-    } else {
-      setSending(true);
-    }
-    
-    setError(null);
-    
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      // Authenticated mode: Use existing session-based flow
+      let currentSessionId = sessionId;
+      
+      if (!currentSessionId) {
+        try {
+          currentSessionId = await startSession(null);
+          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          setIsAutoMode(false);
+        } catch (err) {
+          setSending(false);
+          return;
+        }
+      }
       
       const response = await fetch(`${apiBaseUrl}/api/gaze/session/send-for-review`, {
         method: 'POST',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           sessionId: currentSessionId,
-          patientId: token ? patientId : null,
+          patientId: patientId,
+          sessionType: 'authenticated',
+          assignedRole: 'therapist',
+          source: 'live_gaze_analysis',
           endTime: new Date().toISOString(),
-          snapshots: localSnapshots 
+          snapshots: localSnapshots
         })
       });
 
-      if (!response.ok) throw new Error("Failed to send for review");
+      const submitResult = await response.json();
       
-      alert("Session sent to therapist dashboard successfully!");
+      if (!response.ok) {
+        // ERROR: Backend failed
+        throw new Error(submitResult.error || "Failed to send for review");
+      }
+      
+      // SUCCESS: Only show modal if HTTP 200 and backend confirms save
+      console.log('✅ Session submitted successfully:', submitResult.message);
+      setError(null); // Clear any error state
+      setShowSuccessModal(true);
       setLocalSnapshots([]);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       setIsAutoMode(false);
-      setSessionId(null); 
-      navigate(token ? '/dashboard' : '/'); 
+      setSessionId(null);
+      setSessionPhase('idle');
+      setLiveAttentionScore(null);
+      setFinalAttentionScore(null);
+      setResult(null); 
     } catch (err) {
-      setError(`Submit failed: ${err.message}`);
+      // ERROR: Show single consistent error state
+      console.error('❌ Submit failed:', err.message);
+      setError(`Submission failed: ${err.message}`);
+      setGuestSuccessMessage(''); // Clear any success message
+      setShowSuccessModal(false); // Close success modal if open
+      setSessionPhase(sessionId ? 'ended' : 'idle'); // Return to appropriate phase
     } finally {
       setSending(false);
     }
@@ -336,9 +423,12 @@ const GazeSnapshotCapture = () => {
             <div>
               <h1 className="text-3xl font-bold mb-2">Live Gaze Analysis</h1>
               <p className="text-slate-400">
-                {isAutoMode ? `Session Active - Capturing snapshots automatically` : 'Capturing live gaze patterns for ASD screening'}
+                {sessionPhase === 'recording' ? 'Session Active - Capturing snapshots automatically' : 
+                 sessionPhase === 'ended' ? 'Session ended - Review metrics and send for professional analysis' :
+                 sessionPhase === 'submitting' ? 'Submitting session data...' :
+                 'Capturing live gaze patterns for ASD screening'}
               </p>
-              {!patientId && (
+              {!patientId && sessionPhase === 'idle' && (
                 <div className="mt-2 inline-flex items-center gap-2 bg-indigo-500/10 text-indigo-300 px-3 py-1 rounded-full text-xs font-semibold border border-indigo-500/20">
                   <FaUser size={10} /> Guest Mode Enabled
                 </div>
@@ -348,10 +438,11 @@ const GazeSnapshotCapture = () => {
             <div className="flex gap-4">
               <button 
                 onClick={sendForReview}
-                disabled={sending || (!sessionId && localSnapshots.length === 0)}
-                className="bg-green-600 hover:bg-green-700 px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all disabled:opacity-50 shadow-lg shadow-green-500/20"
+                disabled={sessionPhase === 'recording' || sessionPhase === 'submitting' || localSnapshots.length === 0}
+                className="bg-green-600 hover:bg-green-700 px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-green-500/20"
+                title={sessionPhase === 'recording' ? 'End session before submitting' : ''}
               >
-                {sending ? <FaSpinner className="animate-spin" /> : <><FaPaperPlane /> Send for Review</>}
+                {sessionPhase === 'submitting' ? <FaSpinner className="animate-spin" /> : <><FaPaperPlane /> Send for Review</>}
               </button>
 
               {isAutoMode ? (
@@ -381,6 +472,16 @@ const GazeSnapshotCapture = () => {
                   <p className="text-sm">{error}</p>
                 </div>
               )}
+              
+              {guestSuccessMessage && (
+                <div className="bg-green-500/20 border border-green-500/50 p-4 rounded-xl flex items-center gap-3 text-green-200 animate-pulse">
+                  <svg className="w-6 h-6 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <p className="text-sm font-medium">{guestSuccessMessage}</p>
+                </div>
+              )}
+              
               <div className="relative rounded-2xl overflow-hidden bg-black aspect-video border-2 border-slate-700">
                 {cameraActive || isAutoMode ? (
                   <Webcam
@@ -422,13 +523,33 @@ const GazeSnapshotCapture = () => {
                   <FaSpinner className="animate-spin text-4xl text-indigo-500 mb-4" />
                   <p className="text-slate-400">Processing facial landmarks...</p>
                 </div>
-              ) : result ? (
+              ) : result || liveAttentionScore !== null || finalAttentionScore !== null ? (
                 <div className="space-y-6">
                   <div className="text-center">
-                    <div className={`text-5xl font-bold mb-2 ${result.attention_score > 0.6 ? 'text-green-400' : 'text-yellow-400'}`}>
-                      {(result.attention_score * 100).toFixed(0)}%
-                    </div>
-                    <p className="text-slate-400 uppercase tracking-widest text-sm font-semibold">Attention Score</p>
+                    {sessionPhase === 'ended' && finalAttentionScore !== null ? (
+                      <>
+                        <div className={`text-5xl font-bold mb-2 ${finalAttentionScore > 0.6 ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {(finalAttentionScore * 100).toFixed(0)}%
+                        </div>
+                        <p className="text-slate-400 uppercase tracking-widest text-sm font-semibold">Final Attention Score</p>
+                        <p className="text-xs text-slate-500 mt-1">Computed from {localSnapshots.length} snapshots</p>
+                      </>
+                    ) : liveAttentionScore !== null ? (
+                      <>
+                        <div className={`text-5xl font-bold mb-2 ${liveAttentionScore > 0.6 ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {(liveAttentionScore * 100).toFixed(0)}%
+                        </div>
+                        <p className="text-slate-400 uppercase tracking-widest text-sm font-semibold">Live Attention Score</p>
+                        <p className="text-xs text-slate-500 mt-1">Real-time feedback</p>
+                      </>
+                    ) : result ? (
+                      <>
+                        <div className={`text-5xl font-bold mb-2 ${result.attention_score > 0.6 ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {(result.attention_score * 100).toFixed(0)}%
+                        </div>
+                        <p className="text-slate-400 uppercase tracking-widest text-sm font-semibold">Attention Score</p>
+                      </>
+                    ) : null}
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
@@ -472,6 +593,77 @@ const GazeSnapshotCapture = () => {
               )}
             </div>
           </div>
+
+          {/* Success Modal */}
+          {showSuccessModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+              <div className="bg-slate-800 border border-slate-700 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-300">
+                <div className="p-6 border-b border-slate-700 bg-green-600">
+                  <div className="flex justify-center">
+                    <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center">
+                      <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+                <div className="p-8 text-center space-y-4">
+                  <h2 className="text-2xl font-bold text-white">Session Successfully Submitted!</h2>
+                  <p className="text-slate-400 text-sm leading-relaxed">
+                    Your gaze analysis session has been sent to our professional therapists for comprehensive review.
+                  </p>
+                  <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4 text-left space-y-2">
+                    <h3 className="text-sm font-bold text-indigo-300 flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                      </svg>
+                      What Happens Next?
+                    </h3>
+                    <ul className="text-xs text-slate-400 space-y-1.5">
+                      <li>✓ Therapist will review captured images and gaze metrics</li>
+                      <li>✓ Professional analysis will be conducted</li>
+                      <li>✓ You may be contacted for follow-up if needed</li>
+                    </ul>
+                  </div>
+                  {!token && (
+                    <div className="bg-slate-900/50 border border-slate-700 rounded-xl p-4 text-left">
+                      <p className="text-xs text-slate-400">
+                        <strong className="text-slate-300">Note:</strong> This was a guest session. Create an account to track your screening history and receive notifications.
+                      </p>
+                    </div>
+                  )}
+                  <div className="pt-4 space-y-3">
+                    <button 
+                      onClick={() => {
+                        setShowSuccessModal(false);
+                        setSnapshot(null);
+                        setResult(null);
+                        setCameraActive(false);
+                        setSessionPhase('idle');
+                        setLiveAttentionScore(null);
+                        setFinalAttentionScore(null);
+                        setError(null);
+                      }}
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-indigo-500/20"
+                    >
+                      Start New Session
+                    </button>
+                    {!token && (
+                      <button 
+                        onClick={() => {
+                          setShowSuccessModal(false);
+                          navigate('/');
+                        }}
+                        className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-xl transition-all"
+                      >
+                        Return to Home
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Guest Form Modal */}
           {showGuestForm && (

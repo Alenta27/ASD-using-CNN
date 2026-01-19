@@ -49,11 +49,19 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
+const gazeUploadsDir = path.join(__dirname, 'uploads/gaze');
+if (!fs.existsSync(gazeUploadsDir)) fs.mkdirSync(gazeUploadsDir, { recursive: true });
+
 const credentialsDir = path.join(__dirname, 'credentials');
 if (!fs.existsSync(credentialsDir)) fs.mkdirSync(credentialsDir, { recursive: true });
 
+// Serve static files - CRITICAL for guest session images
 app.use('/credentials', express.static(credentialsDir));
-app.use('/uploads/gaze', express.static(path.join(__dirname, 'uploads/gaze')));
+app.use('/uploads', express.static(uploadsDir)); // Serve all uploads
+app.use('/uploads/gaze', express.static(gazeUploadsDir)); // Specifically serve gaze images
+
+console.log('📁 Serving uploads from:', uploadsDir);
+console.log('📸 Serving gaze images from:', gazeUploadsDir);
 
 // ✅ Health Check Route (Render Requirement)
 app.get('/api/health', (req, res) => {
@@ -114,6 +122,13 @@ try {
   app.use('/api/gaze', require('./routes/gaze'));
 } catch (e) {
   console.error('Gaze Routes Error:', e.message);
+}
+
+// ✅ Guest Routes (Unauthenticated)
+try {
+  app.use('/api/guest', require('./routes/guest'));
+} catch (e) {
+  console.error('Guest Routes Error:', e.message);
 }
 
 // ✅ Behavioral Assessment Routes

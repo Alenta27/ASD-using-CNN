@@ -15,6 +15,8 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
   const landmarkerRef = useRef(null);
   const requestRef = useRef(null);
   const lastVideoTimeRef = useRef(-1);
+  const leftStimulusRef = useRef(null);
+  const rightStimulusRef = useRef(null);
 
   useEffect(() => {
     initializeLandmarker();
@@ -56,6 +58,13 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
         videoRef.current.onloadedmetadata = () => {
           setIsCapturing(true);
           videoRef.current.play();
+          // Start stimulus videos
+          if (leftStimulusRef.current) {
+            leftStimulusRef.current.play().catch(() => {});
+          }
+          if (rightStimulusRef.current) {
+            rightStimulusRef.current.play().catch(() => {});
+          }
           requestRef.current = requestAnimationFrame(predictWebcam);
           startTimer();
         };
@@ -154,6 +163,13 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
     };
 
     stopCamera();
+    // Pause stimulus videos
+    if (leftStimulusRef.current) {
+      try { leftStimulusRef.current.pause(); } catch {}
+    }
+    if (rightStimulusRef.current) {
+      try { rightStimulusRef.current.pause(); } catch {}
+    }
     onComplete(assessmentData);
   };
 
@@ -191,15 +207,31 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
         ) : (
           <div className="social-attention-active">
             <div className="split-screen-game">
-              <div className={`attention-side human ${currentGaze === 'left' ? 'focused' : ''}`}>
-                <div className="placeholder-video">👤 Social Stimulus</div>
-                <p>Human Interaction</p>
+                <div className={`attention-side human ${currentGaze === 'left' ? 'focused' : ''}`}>
+                  <video
+                    ref={leftStimulusRef}
+                    className="stimulus-video"
+                    src="https://storage.googleapis.com/public-datasets-misc/behavioral/social-interaction-sample.mp4"
+                    muted
+                    loop
+                    playsInline
+                    preload="auto"
+                  />
+                  <p>Human Interaction</p>
+                </div>
+                <div className={`attention-side object ${currentGaze === 'right' ? 'focused' : ''}`}>
+                  <video
+                    ref={rightStimulusRef}
+                    className="stimulus-video"
+                    src="https://storage.googleapis.com/public-datasets-misc/behavioral/geometric-motion-sample.mp4"
+                    muted
+                    loop
+                    playsInline
+                    preload="auto"
+                  />
+                  <p>Moving Objects</p>
+                </div>
               </div>
-              <div className={`attention-side object ${currentGaze === 'right' ? 'focused' : ''}`}>
-                <div className="placeholder-video">⚙️ Geometric Pattern</div>
-                <p>Moving Objects</p>
-              </div>
-            </div>
             
             <div className="video-container tracking-hidden">
               <video ref={videoRef} playsInline muted style={{ width: '100px', height: '75px' }} />

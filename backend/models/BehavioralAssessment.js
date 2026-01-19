@@ -41,6 +41,12 @@ const BehavioralAssessmentSchema = new mongoose.Schema({
   objectFocusRatio: Number,
   gazeShiftCount: Number,
   sessionDuration: Number,
+  // Imitation game fields
+  totalActions: Number,
+  correctImitations: Number,
+  imitationAccuracy: Number,
+  averageReactionTime: Number,
+  meanSimilarityScore: Number,
   metrics: {
     accuracy: Number,
     responseTime: Number,
@@ -59,7 +65,13 @@ const BehavioralAssessmentSchema = new mongoose.Schema({
     interruptionCount: Number,
     eyeContactTimeMs: Number,
     objectFocusTimeMs: Number,
-    totalFrames: Number
+    totalFrames: Number,
+    // Imitation game metrics
+    totalActions: Number,
+    correctImitations: Number,
+    imitationAccuracy: Number,
+    averageReactionTime: Number,
+    meanSimilarityScore: Number
   },
   indicators: [
     {

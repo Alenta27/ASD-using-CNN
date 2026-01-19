@@ -1133,4 +1133,251 @@ router.post('/appointments/complete-session', requireResourceAccess('appointment
   }
 });
 
+// ==============================================
+// Patient Assignment System
+// ==============================================
+
+// Convert Guest Session to Patient
+router.post('/convert-guest-to-patient', async (req, res) => {
+  try {
+    const { guestSessionId, patientName, patientAge, patientGender, additionalInfo } = req.body;
+
+    if (!guestSessionId) {
+      return res.status(400).json({ message: 'Guest session ID is required' });
+    }
+
+    // Find the guest session
+    const guestSession = await GazeSession.findById(guestSessionId);
+    if (!guestSession) {
+      return res.status(404).json({ message: 'Guest session not found' });
+    }
+
+    if (!guestSession.isGuest) {
+      return res.status(400).json({ message: 'This is not a guest session' });
+    }
+
+    // Check if patient already exists with this email
+    const existingParent = await User.findOne({ email: guestSession.guestInfo.email });
+    let parentId;
+
+    if (existingParent) {
+      parentId = existingParent._id;
+      console.log(`✅ Found existing parent: ${existingParent.email}`);
+    } else {
+      // Create a placeholder parent account
+      const newParent = new User({
+        username: guestSession.guestInfo.parentName || 'Parent',
+        email: guestSession.guestInfo.email,
+        role: 'parent',
+        status: 'approved',
+        isActive: true
+      });
+      await newParent.save();
+      parentId = newParent._id;
+      console.log(`✅ Created new parent account: ${guestSession.guestInfo.email}`);
+    }
+
+    // Create patient profile
+    const newPatient = new Patient({
+      name: patientName || guestSession.guestInfo.childName,
+      age: patientAge || 0,
+      gender: patientGender || 'Not specified',
+      medical_history: additionalInfo || '',
+      parent_id: parentId,
+      therapist_user_id: req.user.id, // Assign to current therapist
+      screeningStatus: 'in-progress',
+      reportStatus: 'pending'
+    });
+
+    await newPatient.save();
+    console.log(`✅ Created patient: ${newPatient.name}`);
+
+    // Link guest session to patient
+    guestSession.patientId = newPatient._id;
+    guestSession.therapistId = req.user.id;
+    guestSession.isGuest = false;
+    guestSession.sessionType = 'authenticated';
+    await guestSession.save();
+
+    // Find and link all other guest sessions with same email
+    const otherGuestSessions = await GazeSession.find({
+      'guestInfo.email': guestSession.guestInfo.email,
+      isGuest: true,
+      _id: { $ne: guestSessionId }
+    });
+
+    for (const session of otherGuestSessions) {
+      session.patientId = newPatient._id;
+      session.therapistId = req.user.id;
+      session.isGuest = false;
+      session.sessionType = 'authenticated';
+      await session.save();
+    }
+
+    console.log(`✅ Linked ${otherGuestSessions.length} additional guest sessions to patient`);
+
+    res.json({
+      success: true,
+      message: 'Guest successfully converted to patient',
+      patient: newPatient,
+      linkedSessions: otherGuestSessions.length + 1
+    });
+
+  } catch (error) {
+    console.error('❌ Error converting guest to patient:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Add Patient Manually
+router.post('/add-patient', async (req, res) => {
+  try {
+    const { 
+      patientName, 
+      patientAge, 
+      patientGender, 
+      medicalHistory,
+      parentName,
+      parentEmail,
+      linkToGuestEmail // Optional: link to existing guest sessions
+    } = req.body;
+
+    if (!patientName || !patientAge || !patientGender || !parentEmail) {
+      return res.status(400).json({ 
+        message: 'Patient name, age, gender, and parent email are required' 
+      });
+    }
+
+    // Check if parent exists or create new
+    let parent = await User.findOne({ email: parentEmail });
+    
+    if (!parent) {
+      parent = new User({
+        username: parentName || 'Parent',
+        email: parentEmail,
+        role: 'parent',
+        status: 'approved',
+        isActive: true
+      });
+      await parent.save();
+      console.log(`✅ Created new parent: ${parentEmail}`);
+    }
+
+    // Create patient
+    const newPatient = new Patient({
+      name: patientName,
+      age: patientAge,
+      gender: patientGender,
+      medical_history: medicalHistory || '',
+      parent_id: parent._id,
+      therapist_user_id: req.user.id,
+      screeningStatus: 'pending',
+      reportStatus: 'pending'
+    });
+
+    await newPatient.save();
+    console.log(`✅ Patient created: ${newPatient.name}`);
+
+    // If linkToGuestEmail is provided, link all guest sessions with that email
+    if (linkToGuestEmail) {
+      const guestSessions = await GazeSession.find({
+        'guestInfo.email': linkToGuestEmail,
+        isGuest: true
+      });
+
+      for (const session of guestSessions) {
+        session.patientId = newPatient._id;
+        session.therapistId = req.user.id;
+        session.isGuest = false;
+        session.sessionType = 'authenticated';
+        await session.save();
+      }
+
+      console.log(`✅ Linked ${guestSessions.length} guest sessions to patient`);
+
+      return res.json({
+        success: true,
+        message: 'Patient added successfully',
+        patient: newPatient,
+        linkedSessions: guestSessions.length
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Patient added successfully',
+      patient: newPatient
+    });
+
+  } catch (error) {
+    console.error('❌ Error adding patient:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Search Guest Sessions by Email
+router.get('/search-guest-sessions', async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ message: 'Email parameter is required' });
+    }
+
+    const guestSessions = await GazeSession.find({
+      'guestInfo.email': email,
+      isGuest: true
+    }).sort({ createdAt: -1 }).limit(50);
+
+    res.json({
+      success: true,
+      sessions: guestSessions,
+      count: guestSessions.length
+    });
+
+  } catch (error) {
+    console.error('❌ Error searching guest sessions:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get All Guest Sessions for Review
+router.get('/guest-sessions', async (req, res) => {
+  try {
+    const guestSessions = await GazeSession.find({
+      isGuest: true,
+      status: { $in: ['completed', 'pending_review'] }
+    })
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean();
+
+    // Group by email
+    const sessionsByEmail = guestSessions.reduce((acc, session) => {
+      const email = session.guestInfo?.email;
+      if (email) {
+        if (!acc[email]) {
+          acc[email] = {
+            email,
+            parentName: session.guestInfo?.parentName,
+            childName: session.guestInfo?.childName,
+            sessions: []
+          };
+        }
+        acc[email].sessions.push(session);
+      }
+      return acc;
+    }, {});
+
+    res.json({
+      success: true,
+      guestGroups: Object.values(sessionsByEmail)
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching guest sessions:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;

@@ -25,7 +25,13 @@ router.post('/submit', async (req, res) => {
       eyeContactRatio,
       objectFocusRatio,
       gazeShiftCount,
-      sessionDuration
+      sessionDuration,
+      // Imitation game specific fields
+      totalActions,
+      correctImitations,
+      imitationAccuracy,
+      averageReactionTime,
+      meanSimilarityScore
     } = req.body;
     const teacherId = req.user.id;
 
@@ -42,6 +48,11 @@ router.post('/submit', async (req, res) => {
       objectFocusRatio,
       gazeShiftCount,
       sessionDuration,
+      totalActions,
+      correctImitations,
+      imitationAccuracy,
+      averageReactionTime,
+      meanSimilarityScore,
       metrics,
       indicators,
       rawGameData
