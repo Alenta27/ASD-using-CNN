@@ -330,7 +330,7 @@ Clinical Significance: Early intervention with evidence-based practices (ABA, sp
 Severity Levels:
 • Mild: Subtle behavioral differences; child may "mask" symptoms
   → Recommendation: Social skills training, sensory support
-• Moderate: Clear differences in communication & behavior
+• Medium: Clear differences in communication & behavior
   → Recommendation: Structured ABA, speech therapy, sensory integration
 • Severe: Significant support needs; communication challenges
   → Recommendation: Intensive ABA, augmentative communication, specialized care
@@ -342,7 +342,7 @@ Next Steps: Correlate findings with behavioral observations and parent reports.`
       response: `🎯 EVIDENCE-BASED INTERVENTIONS FOR ASD
 
 ABA (Applied Behavior Analysis)
-• 20-40 hrs/week is gold standard for moderate-severe cases
+• 20-40 hrs/week is gold standard for Medium-Severe cases
 • Focuses on reinforcing desired behaviors, reducing challenging behaviors
 
 Speech & Language Therapy
@@ -441,7 +441,7 @@ Creating Sensory-Friendly Spaces:
       }
     }
     
-    return `I'm here to help with ASD clinical guidance! You can ask me about:\n• ASD explanation & severity levels\n• Interpreting CNN/MRI results\n• Evidence-based interventions & therapy plans\n• Parent communication strategies\n• Session documentation & progress tracking\n• Latest research & best practices\n• Sensory integration techniques\n\n**Try asking:** "Suggest interventions for moderate ASD" or "How do I explain results to parents?"`;
+    return `I'm here to help with ASD clinical guidance! You can ask me about:\n• ASD explanation & severity levels\n• Interpreting CNN/MRI results\n• Evidence-based interventions & therapy plans\n• Parent communication strategies\n• Session documentation & progress tracking\n• Latest research & best practices\n• Sensory integration techniques\n\n**Try asking:** "Suggest interventions for Medium risk ASD" or "How do I explain results to parents?"`;
   };
 
   const handleAssistantSend = () => {
@@ -518,8 +518,8 @@ Creating Sensory-Friendly Spaces:
               )}
               {assistantMessages.length === 0 && (
                 <div className="assistant-prompts">
-                  <button className="assistant-prompt" onClick={() => handleAssistantPrompt("Suggest interventions for moderate ASD age 8")}>
-                    💡 Suggest interventions for moderate ASD
+                  <button className="assistant-prompt" onClick={() => handleAssistantPrompt("Suggest interventions for Medium risk ASD age 8")}>
+                    💡 Suggest interventions for Medium risk ASD
                   </button>
                   <button className="assistant-prompt" onClick={() => handleAssistantPrompt("How do I explain ASD results to parents empathetically?")}>
                     💬 Explain results to parents

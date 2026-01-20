@@ -70,8 +70,8 @@ const TeacherBehavioralAssessmentDetailPage = () => {
           studentName: s.studentId?.name || 'Unknown Student',
           date: new Date(s.completedAt).toLocaleDateString(),
           score: s.score,
-          metrics: s.metrics,
-          indicators: s.indicators,
+          metrics: s.metrics || {},
+          indicators: s.indicators || {},
           // We can't easily get history for all students in one go without more API calls
           // For now, let's just use the current score as history point
           history: [{ date: new Date(s.completedAt).toLocaleDateString(), score: s.score }]
@@ -128,12 +128,12 @@ const TeacherBehavioralAssessmentDetailPage = () => {
   }
 
   const radarData = [
-    { subject: 'Accuracy', A: selectedSession.metrics.accuracy || 0, B: compareMode && compareSession ? compareSession.metrics.accuracy || 0 : 0, fullMark: 100 },
-    { subject: 'Eye Contact', A: selectedSession.metrics.eyeContactTime || 0, B: compareMode && compareSession ? compareSession.metrics.eyeContactTime || 0 : 0, fullMark: 100 },
-    { subject: 'Imitation', A: selectedSession.metrics.imitationScore || 0, B: compareMode && compareSession ? compareSession.metrics.imitationScore || 0 : 0, fullMark: 100 },
-    { subject: 'Social', A: selectedSession.metrics.socialResponseCorrectness || 0, B: compareMode && compareSession ? compareSession.metrics.socialResponseCorrectness || 0 : 0, fullMark: 100 },
-    { subject: 'Turn Taking', A: selectedSession.metrics.waitingBehaviorScore || 0, B: compareMode && compareSession ? compareSession.metrics.waitingBehaviorScore || 0 : 0, fullMark: 100 },
-    { subject: 'Sensory', A: (100 - (selectedSession.metrics.sensoryResponseTime * 10 || 0)), B: compareMode && compareSession ? (100 - (compareSession.metrics.sensoryResponseTime * 10 || 0)) : 0, fullMark: 100 },
+    { subject: 'Accuracy', A: selectedSession.metrics?.accuracy || 0, B: compareMode && compareSession ? compareSession.metrics?.accuracy || 0 : 0, fullMark: 100 },
+    { subject: 'Eye Contact', A: selectedSession.metrics?.eyeContactTime || 0, B: compareMode && compareSession ? compareSession.metrics?.eyeContactTime || 0 : 0, fullMark: 100 },
+    { subject: 'Imitation', A: selectedSession.metrics?.imitationScore || 0, B: compareMode && compareSession ? compareSession.metrics?.imitationScore || 0 : 0, fullMark: 100 },
+    { subject: 'Social', A: selectedSession.metrics?.socialResponseCorrectness || 0, B: compareMode && compareSession ? compareSession.metrics?.socialResponseCorrectness || 0 : 0, fullMark: 100 },
+    { subject: 'Turn Taking', A: selectedSession.metrics?.waitingBehaviorScore || 0, B: compareMode && compareSession ? compareSession.metrics?.waitingBehaviorScore || 0 : 0, fullMark: 100 },
+    { subject: 'Sensory', A: (100 - (selectedSession.metrics?.sensoryResponseTime * 10 || 0)), B: compareMode && compareSession ? (100 - (compareSession.metrics?.sensoryResponseTime * 10 || 0)) : 0, fullMark: 100 },
   ];
 
   return (
@@ -243,7 +243,7 @@ const TeacherBehavioralAssessmentDetailPage = () => {
           <div className="metric-card indicators-card">
             <h3>ASD-Relevant Indicators</h3>
             <div className="indicators-list">
-              {selectedSession.indicators.map((indicator, idx) => (
+              {(selectedSession.indicators || []).map((indicator, idx) => (
                 <div key={idx} className="indicator-item">
                   <div className="indicator-info">
                     <span className="indicator-label">{indicator.label}</span>
@@ -264,7 +264,7 @@ const TeacherBehavioralAssessmentDetailPage = () => {
             <div className="clinical-note">
               <FiAlertCircle className="note-icon" />
               <p>
-                {selectedSession.indicators.some(i => i.color === '#ef4444')
+                {(selectedSession.indicators || []).some(i => i.color === '#ef4444')
                   ? "Analysis suggests areas requiring attention. Review specific indicators marked in red for intervention planning."
                   : "Child shows positive engagement. Continue with current support plan and monitor progress."}
               </p>
@@ -282,7 +282,7 @@ const TeacherBehavioralAssessmentDetailPage = () => {
             </div>
             <div className="chart-container">
               <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={selectedSession.history}>
+                <LineChart data={selectedSession.history || []}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                   <XAxis dataKey="date" tick={{ fontSize: 12, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
                   <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
@@ -311,7 +311,7 @@ const TeacherBehavioralAssessmentDetailPage = () => {
               <span>Value</span>
               <span>Session Context</span>
             </div>
-            {Object.entries(selectedSession.metrics).map(([key, value]) => (
+            {Object.entries(selectedSession.metrics || {}).map(([key, value]) => (
               <div className="table-row" key={key}>
                 <span style={{ textTransform: 'capitalize' }}>{key.replace(/([A-Z])/g, ' $1')}</span>
                 <span className="value-text">{typeof value === 'number' && value < 10 ? value.toFixed(2) : value}{key.toLowerCase().includes('time') ? 's' : ''}</span>

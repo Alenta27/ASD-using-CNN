@@ -374,7 +374,7 @@ const PatternFixationGame = ({ studentId, onComplete }) => {
       fixationColor = '#10b981';
       cognitiveFlexibility = 'Good';
     } else if (fixationScore <= 0.65) {
-      fixationLevel = 'Moderate';
+      fixationLevel = 'Medium';
       fixationColor = '#f59e0b';
       cognitiveFlexibility = 'Reduced';
     } else {
@@ -806,7 +806,7 @@ const PatternFixationGame = ({ studentId, onComplete }) => {
       fixationColor = '#10b981';
       cognitiveFlexibility = 'Good';
     } else if (fixationScore <= 0.65) {
-      fixationLevel = 'Moderate';
+      fixationLevel = 'Medium';
       fixationColor = '#f59e0b';
       cognitiveFlexibility = 'Reduced';
     } else {
@@ -876,7 +876,7 @@ const PatternFixationGame = ({ studentId, onComplete }) => {
               </h4>
               <p style={{ color: '#666', lineHeight: 1.6, fontSize: 14 }}>
                 {fixationLevel === 'Low' && 'Shows typical pattern exploration behavior with good cognitive flexibility. No significant repetitive interest patterns detected.'}
-                {fixationLevel === 'Moderate' && 'Shows some preference for repetitive patterns with moderate cognitive flexibility. May benefit from activities that encourage varied exploration.'}
+                {fixationLevel === 'Medium' && 'Shows some preference for repetitive patterns with moderate cognitive flexibility. May benefit from activities that encourage varied exploration.'}
                 {fixationLevel === 'High' && 'Shows strong preference for repetitive patterns with reduced cognitive flexibility. Consider further clinical evaluation for restricted and repetitive behavior patterns.'}
               </p>
             </div>

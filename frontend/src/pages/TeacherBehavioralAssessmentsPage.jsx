@@ -29,6 +29,7 @@ import SoundSensitivityGame from '../components/games/SoundSensitivityGame';
 import PatternFixationGame from '../components/games/PatternFixationGame';
 import StoryUnderstandingGame from '../components/games/StoryUnderstandingGame';
 import TurnTakingGame from '../components/games/TurnTakingGame';
+import SocialAttentionResults from '../components/SocialAttentionResults';
 
 const assessmentTools = [
   {
@@ -179,6 +180,15 @@ const TeacherBehavioralAssessmentsPage = () => {
   };
 
   const handleGameComplete = async (assessmentData) => {
+    // Social Attention Test handles its own saving in the new implementation
+    if (assessmentData.assessmentType === 'social-attention' && assessmentData.sessionId) {
+        setLastAssessmentData(assessmentData);
+        setShowGameModal(false);
+        setActiveGame(null);
+        setShowResultsModal(true);
+        return;
+    }
+
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000'}/api/behavioral/submit`, {
@@ -334,7 +344,11 @@ const TeacherBehavioralAssessmentsPage = () => {
               }}><FiX /></button>
             </div>
             <div className="results-content">
-              <div className="results-section">
+              {lastAssessmentData.assessmentType === 'social-attention' ? (
+                <SocialAttentionResults results={lastAssessmentData} />
+              ) : (
+                <>
+                  <div className="results-section">
                 <h4>Session Information</h4>
                 <div className="results-grid">
                   {lastAssessmentData.sessionId && (
@@ -425,6 +439,88 @@ const TeacherBehavioralAssessmentsPage = () => {
                 </>
               )}
 
+              {/* Sound Sensitivity Specific Metrics */}
+              {(lastAssessmentData.assessmentType === 'sound-sensitivity' || lastAssessmentData.game === 'Sound Sensitivity') && lastAssessmentData.rawGameData && (
+                <div className="results-section">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                    <h4>Sound Response Summary</h4>
+                    <div style={{ padding: '4px 12px', borderRadius: '20px', backgroundColor: lastAssessmentData.metrics?.overallLevel === 'High' ? '#fee2e2' : lastAssessmentData.metrics?.overallLevel === 'Moderate' ? '#fef3c7' : '#dcfce7', color: lastAssessmentData.metrics?.overallLevel === 'High' ? '#ef4444' : lastAssessmentData.metrics?.overallLevel === 'Moderate' ? '#f59e0b' : '#10b981', fontWeight: 'bold', fontSize: '14px' }}>
+                      Level: {lastAssessmentData.metrics?.overallLevel || 'Low'}
+                    </div>
+                  </div>
+                  <div className="sound-results-list">
+                    {lastAssessmentData.rawGameData.map((item, idx) => (
+                      <div key={idx} className={`sound-result-card reaction-${item.reactionScore || 0}`}>
+                        <div className="sound-result-header">
+                          <strong>{item.soundName || item.label}</strong>
+                          <span className="sound-type-tag">{item.soundType || item.type}</span>
+                        </div>
+                        <div className="sound-result-body">
+                          <span className={`reaction-badge level-${item.reactionScore || 0}`}>
+                            {item.intensity || (item.reactionScore === 0 ? 'No Reaction' : item.reactionScore === 1 ? 'Mild' : 'Strong')}
+                          </span>
+                          <div className="sound-details-mini">
+                            {item.reactions && item.reactions.length > 0 ? (
+                                item.reactions.map((r, i) => <span key={i} className="detail-tag">{r}</span>)
+                            ) : (
+                                item.reactionScore > 0 ? (
+                                    <>
+                                        {item.details?.earCovering && <span className="detail-tag">Ear Covering</span>}
+                                        {item.details?.vocalization > 60 && <span className="detail-tag">Vocal Reaction</span>}
+                                        {item.details?.facialExpressions?.length > 0 && <span className="detail-tag">Facial Change</span>}
+                                        {item.details?.headTurn && <span className="detail-tag">Head Turn</span>}
+                                        {item.details?.gazeAvoidance && <span className="detail-tag">Gaze Avoidance</span>}
+                                    </>
+                                ) : <span className="detail-tag-none">Stable</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+
+              {/* Turn-Taking Specific Metrics */}
+              {(lastAssessmentData.assessmentType === 'turn-taking' || lastAssessmentData.game === 'Turn-Taking') && (
+                <div className="results-section">
+                  <h4>Turn-Taking Analysis</h4>
+                  <div className="results-grid">
+                    {lastAssessmentData.metrics?.turnTakingAccuracy !== undefined && (
+                      <div className="result-item">
+                        <span className="result-label">Accuracy:</span>
+                        <span className="result-value highlight">{lastAssessmentData.metrics.turnTakingAccuracy}%</span>
+                      </div>
+                    )}
+                    {lastAssessmentData.metrics?.impulsivityLevel && (
+                      <div className="result-item">
+                        <span className="result-label">Impulsivity Level:</span>
+                        <span className="result-value highlight">{lastAssessmentData.metrics.impulsivityLevel}</span>
+                      </div>
+                    )}
+                    {lastAssessmentData.metrics?.attentionConsistency && (
+                      <div className="result-item">
+                        <span className="result-label">Attention:</span>
+                        <span className="result-value highlight">{lastAssessmentData.metrics.attentionConsistency}</span>
+                      </div>
+                    )}
+                    {lastAssessmentData.metrics?.avgReactionTime !== undefined && (
+                      <div className="result-item">
+                        <span className="result-label">Avg Speed:</span>
+                        <span className="result-value highlight">{lastAssessmentData.metrics.avgReactionTime}ms</span>
+                      </div>
+                    )}
+                  </div>
+                  {lastAssessmentData.summary && (
+                    <div className="result-item" style={{ marginTop: '16px', borderLeft: '4px solid #3b82f6' }}>
+                      <span className="result-label">Clinical Observation:</span>
+                      <span className="result-value" style={{ fontStyle: 'italic', marginTop: '4px' }}>"{lastAssessmentData.summary}"</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* General Metrics */}
               {lastAssessmentData.metrics && (
                 <div className="results-section">
@@ -467,8 +563,10 @@ const TeacherBehavioralAssessmentsPage = () => {
                   </div>
                 </div>
               )}
+                </>
+              )}
 
-              {/* Action Buttons */}
+              {/* Action Buttons - Always visible */}
               <div className="results-actions">
                 <button 
                   className="btn-primary"

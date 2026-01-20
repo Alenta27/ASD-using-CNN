@@ -202,11 +202,11 @@ router.get('/notifications', verifyToken, adminCheck, async (req, res) => {
     });
 
     const pendingScreenings = await Patient.countDocuments({
-      screeningStatus: 'pending'
+      screeningStatus: { $regex: /^pending$/i }
     });
 
     const pendingReports = await Patient.countDocuments({
-      reportStatus: 'pending'
+      reportStatus: { $regex: /^pending$/i }
     });
 
     res.json({

@@ -9,7 +9,7 @@ The **"Guide & Support"** feature is now integrated into the Therapist Dashboard
 
 ### 1. **Clinical Guidance - Explaining ASD Detection Results**
 Ask the assistant to explain diagnosis findings in clinical terms:
-- ✓ Severity levels (Mild, Moderate, Severe)
+- ✓ Severity levels (Mild, Medium, Severe)
 - ✓ Behavioral manifestations
 - ✓ Clinical significance and implications
 - ✓ How to correlate findings with observations
@@ -17,7 +17,7 @@ Ask the assistant to explain diagnosis findings in clinical terms:
 **Example Prompts:**
 - "Explain ASD severity levels"
 - "Interpret CNN/MRI results"
-- "What does moderate ASD mean?"
+- "What does Medium risk ASD mean?"
 
 ---
 
@@ -29,7 +29,7 @@ Get evidence-based therapy suggestions based on ASD severity:
 - ✓ **Social Skills Training**: Play-based and peer interaction coaching
 
 **Example Prompts:**
-- "Suggest interventions for moderate ASD age 8"
+- "Suggest interventions for Medium risk ASD age 8"
 - "What's the therapy plan for severe ASD?"
 - "Give me activity ideas for social skills"
 
@@ -100,7 +100,7 @@ Get practical guidance on sensory integration and regulation:
 
 ### Quick Start Prompts
 The assistant provides 4 quick-start buttons for common tasks:
-- 💡 **Suggest interventions for moderate ASD** - Get therapy recommendations
+- 💡 **Suggest interventions for Medium risk ASD** - Get therapy recommendations
 - 💬 **Explain results to parents** - Parent communication guidance
 - 🔬 **Latest research & best practices** - Current evidence-based info
 - 🎨 **Sensory integration techniques** - Regulation and activity ideas
@@ -170,7 +170,7 @@ Each response follows this format:
 ## 🚀 Best Practices for Using the Guide
 
 ### 1. Be Specific
-✓ **Good:** "Suggest interventions for moderate ASD age 8 with speech delays"
+✓ **Good:** "Suggest interventions for Medium risk ASD age 8 with speech delays"
 ✗ **Less Helpful:** "What should I do?"
 
 ### 2. Ask Follow-up Questions

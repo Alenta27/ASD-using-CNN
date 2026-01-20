@@ -192,13 +192,13 @@ const BehavioralAnalysisReportPage = () => {
                 </div>
               </div>
               <div className="prob-bar">
-                <div className="prob-label">Moderate Risk</div>
+                <div className="prob-label">Medium Risk</div>
                 <div className="prob-bar-container">
                   <div 
-                    className="prob-bar-fill moderate" 
-                    style={{ width: `${report.riskSummary.probabilityBreakdown.Moderate}%` }}
+                    className="prob-bar-fill medium" 
+                    style={{ width: `${report.riskSummary.probabilityBreakdown.Medium}%` }}
                   >
-                    {report.riskSummary.probabilityBreakdown.Moderate}%
+                    {report.riskSummary.probabilityBreakdown.Medium}%
                   </div>
                 </div>
               </div>

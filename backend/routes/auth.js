@@ -480,12 +480,21 @@ router.get('/api/teacher/dashboard', verifyToken, async (req, res) => {
 
         const byRiskAgg = await Patient.aggregate([
           { $match: { assignedTeacherId: me._id } },
-          { $group: { _id: "$riskLevel", count: { $sum: 1 } } }
+          { $group: { _id: { $toLower: "$riskLevel" }, count: { $sum: 1 } } }
         ]);
-        const riskDistribution = ['Low','Moderate','High'].map(level => ({
-          name: level,
-          value: byRiskAgg.find(x => x._id === level)?.count || 0
-        }));
+        const riskDistribution = ['Low','Medium','High'].map(level => {
+          let count = 0;
+          if (level === 'Medium') {
+            count = byRiskAgg
+              .filter(x => (x._id || '').toLowerCase() === 'medium' || (x._id || '').toLowerCase() === 'moderate')
+              .reduce((acc, curr) => acc + curr.count, 0);
+          } else {
+            count = byRiskAgg
+              .filter(x => (x._id || '').toLowerCase() === level.toLowerCase())
+              .reduce((acc, curr) => acc + curr.count, 0);
+          }
+          return { name: level, value: count };
+        });
 
         // Constrain trends to August-October of current year
         const now = new Date();
@@ -529,12 +538,21 @@ router.get('/api/teacher/insights', verifyToken, async (req, res) => {
     const totalAssignedStudents = await Patient.countDocuments({ assignedTeacherId: me._id });
     const byRiskAgg = await Patient.aggregate([
       { $match: { assignedTeacherId: me._id } },
-      { $group: { _id: "$riskLevel", count: { $sum: 1 } } }
+      { $group: { _id: { $toLower: "$riskLevel" }, count: { $sum: 1 } } }
     ]);
-    const riskDistribution = ['Low','Moderate','High'].map(level => ({
-      name: level,
-      value: byRiskAgg.find(x => x._id === level)?.count || 0
-    }));
+    const riskDistribution = ['Low','Medium','High'].map(level => {
+      let count = 0;
+      if (level === 'Medium') {
+        count = byRiskAgg
+          .filter(x => (x._id || '').toLowerCase() === 'medium' || (x._id || '').toLowerCase() === 'moderate')
+          .reduce((acc, curr) => acc + curr.count, 0);
+      } else {
+        count = byRiskAgg
+          .filter(x => (x._id || '').toLowerCase() === level.toLowerCase())
+          .reduce((acc, curr) => acc + curr.count, 0);
+      }
+      return { name: level, value: count };
+    });
 
     // Constrain trends to August-October of current year
     const now = new Date();
@@ -639,7 +657,10 @@ router.get('/api/teacher/students-at-risk', verifyToken, async (req, res) => {
     if (!me) return res.status(404).json({ message: 'User not found' });
     if (me.role !== 'teacher') return res.status(403).json({ message: 'Forbidden' });
 
-    const results = await Patient.find({ assignedTeacherId: me._id, riskLevel: { $in: ['High', 'Moderate'] } })
+    const results = await Patient.find({ 
+      assignedTeacherId: me._id, 
+      riskLevel: { $regex: /^(high|medium|moderate)$/i } 
+    })
       .select('name age gender riskLevel createdAt')
       .sort({ riskLevel: -1, createdAt: -1 })
       .limit(20)

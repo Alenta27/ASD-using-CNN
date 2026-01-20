@@ -1,15 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
-import { FiCamera, FiAlertTriangle } from 'react-icons/fi';
+import { FiCamera, FiAlertTriangle, FiLoader, FiCheckCircle } from 'react-icons/fi';
 import './GameStyles.css';
 
 const SocialAttentionGame = ({ studentId, onComplete }) => {
-  const [timeLeft, setTimeLeft] = useState(20);
-  const [attentionData, setAttentionData] = useState({ humanTime: 0, objectTime: 0, distractions: 0 });
+  const [timeLeft, setTimeLeft] = useState(30);
   const [isCapturing, setIsCapturing] = useState(false);
   const [isLoadingModel, setIsLoadingModel] = useState(true);
   const [cameraError, setCameraError] = useState(null);
-  const [currentGaze, setCurrentGaze] = useState(null); // 'left', 'right', or null
+  const [cameraStream, setCameraStream] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
+  const [currentGaze, setCurrentGaze] = useState('center');
+  const [testResults, setTestResults] = useState(null);
+  const [videosReady, setVideosReady] = useState({ left: false, right: false });
+  const [videoSources, setVideoSources] = useState({
+    left: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
+    right: "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+  });
   
   const videoRef = useRef(null);
   const landmarkerRef = useRef(null);
@@ -17,14 +24,61 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
   const lastVideoTimeRef = useRef(-1);
   const leftStimulusRef = useRef(null);
   const rightStimulusRef = useRef(null);
+  const logIntervalRef = useRef(null);
+  const containerRef = useRef(null);
+
+  const API_BASE = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
 
   useEffect(() => {
     initializeLandmarker();
+    fetchInitialVideoSources();
+    setupCamera(); // Request camera early for smoother transition
+    
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      if (logIntervalRef.current) clearInterval(logIntervalRef.current);
       stopCamera();
     };
   }, []);
+
+  const setupCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: 640, height: 480 } 
+      });
+      setCameraStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.warn("Camera access deferred or denied:", err);
+      // We don't set error here yet, let startTest handle it if they click start
+    }
+  };
+
+  // Pre-fetch video URLs so the previews show local videos if available
+  const fetchInitialVideoSources = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/social-attention/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ studentId, dryRun: true }) // Dry run to just get URLs
+      });
+      if (res.ok) {
+        const { leftVideo, rightVideo } = await res.json();
+        if (leftVideo && rightVideo) {
+          console.log("Local videos detected:", { leftVideo, rightVideo });
+          setVideoSources({ left: leftVideo, right: rightVideo });
+        }
+      }
+    } catch (err) {
+      console.warn("Could not pre-fetch local video URLs, using defaults.");
+    }
+  };
 
   const initializeLandmarker = async () => {
     try {
@@ -42,7 +96,7 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
       setIsLoadingModel(false);
     } catch (err) {
       console.error("Error initializing MediaPipe:", err);
-      setCameraError("Failed to load tracking models");
+      setCameraError("Assessment service unavailable. (Model Load Failed)");
       setIsLoadingModel(false);
     }
   };
@@ -50,33 +104,72 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
   const startTest = async () => {
     setCameraError(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: 640, height: 480 } 
+      const token = localStorage.getItem('token');
+      const startRes = await fetch(`${API_BASE}/api/social-attention/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ studentId })
       });
+
+      if (!startRes.ok) {
+        throw new Error("Assessment service unavailable. (Backend error)");
+      }
+
+      const { sessionId: newSessionId, leftVideo, rightVideo } = await startRes.json();
+      setSessionId(newSessionId);
+      
+      if (leftVideo && rightVideo) {
+        setVideoSources({ left: leftVideo, right: rightVideo });
+      }
+
+      let stream = cameraStream;
+      if (!stream) {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { width: 640, height: 480 } 
+        }).catch(err => {
+          throw new Error("Camera Required for assessment.");
+        });
+        setCameraStream(stream);
+      }
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = () => {
           setIsCapturing(true);
           videoRef.current.play();
-          // Start stimulus videos
-          if (leftStimulusRef.current) {
-            leftStimulusRef.current.play().catch(() => {});
+          
+          if (containerRef.current?.requestFullscreen) {
+            containerRef.current.requestFullscreen().catch(() => {});
           }
-          if (rightStimulusRef.current) {
-            rightStimulusRef.current.play().catch(() => {});
-          }
+
+          // Start BOTH stimulus videos simultaneously
+          setTimeout(() => {
+            if (leftStimulusRef.current) leftStimulusRef.current.play().catch(e => console.error("Left video play error", e));
+            if (rightStimulusRef.current) rightStimulusRef.current.play().catch(e => console.error("Right video play error", e));
+          }, 800);
+          
           requestRef.current = requestAnimationFrame(predictWebcam);
           startTimer();
+          startGazeLogging(newSessionId);
         };
       }
     } catch (err) {
-      setCameraError("Camera required for social attention tracking");
+      console.error(err);
+      setCameraError(err.message);
     }
   };
 
   const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(t => t.stop());
+      setCameraStream(null);
+    }
     if (videoRef.current && videoRef.current.srcObject) {
       videoRef.current.srcObject.getTracks().forEach(t => t.stop());
+      videoRef.current.srcObject = null;
     }
   };
 
@@ -93,6 +186,32 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
     }, 1000);
   };
 
+  const startGazeLogging = (id) => {
+    logIntervalRef.current = setInterval(() => {
+      logFrameToBackend(id, currentGaze);
+    }, 300); 
+  };
+
+  const logFrameToBackend = async (id, gaze) => {
+    try {
+      const token = localStorage.getItem('token');
+      await fetch(`${API_BASE}/api/social-attention/frame`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          sessionId: id,
+          gaze,
+          timestamp: Date.now()
+        })
+      });
+    } catch (err) {
+      console.error("Failed to log frame:", err);
+    }
+  };
+
   const predictWebcam = () => {
     if (!videoRef.current || !landmarkerRef.current || !isCapturing) return;
 
@@ -104,8 +223,7 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
       if (results.faceLandmarks && results.faceLandmarks.length > 0) {
         processGaze(results.faceLandmarks[0]);
       } else {
-        setAttentionData(prev => ({ ...prev, distractions: prev.distractions + 1 }));
-        setCurrentGaze(null);
+        setCurrentGaze('center');
       }
     }
 
@@ -119,129 +237,190 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
     const rightIris = landmarks[473];
     const irisAvgX = (leftIris.x + rightIris.x) / 2;
 
-    // Map gaze to screen halves
-    // Human is on left (0.0 to 0.5 in screen space, which might mean iris x > 0.55 if mirrored)
-    // For simplicity, let's assume mirrored webcam: looking left means iris x is smaller
-    
     if (irisAvgX < 0.45) {
-      setAttentionData(prev => ({ ...prev, humanTime: prev.humanTime + 1 }));
       setCurrentGaze('left');
     } else if (irisAvgX > 0.55) {
-      setAttentionData(prev => ({ ...prev, objectTime: prev.objectTime + 1 }));
       setCurrentGaze('right');
     } else {
-      setCurrentGaze(null);
+      setCurrentGaze('center');
     }
   };
 
-  const finishTest = () => {
-    const total = attentionData.humanTime + attentionData.objectTime + attentionData.distractions || 1;
-    const socialPreference = (attentionData.humanTime / (attentionData.humanTime + attentionData.objectTime || 1)) * 100;
-
-    const assessmentData = {
-      studentId,
-      assessmentType: 'social-attention',
-      score: Math.round(socialPreference),
-      metrics: {
-        humanVideoViewTime: Math.round(attentionData.humanTime / 30),
-        objectAnimationViewTime: Math.round(attentionData.objectTime / 30),
-        socialResponseTime: parseFloat(socialPreference.toFixed(2))
-      },
-      indicators: [
-        {
-          label: 'Social Preference',
-          status: socialPreference > 55 ? 'Social Interest' : socialPreference > 40 ? 'Balanced' : 'Object Interest',
-          color: socialPreference > 55 ? '#10b981' : socialPreference > 40 ? '#3b82f6' : '#f59e0b'
-        },
-        {
-          label: 'Attention Distribution',
-          status: socialPreference > 70 ? 'Highly Social' : socialPreference > 30 ? 'Balanced' : 'Restricted',
-          color: socialPreference > 70 ? '#10b981' : socialPreference > 30 ? '#3b82f6' : '#ef4444'
-        }
-      ],
-      rawGameData: attentionData
-    };
-
+  const finishTest = async () => {
+    setIsCapturing(false);
     stopCamera();
-    // Pause stimulus videos
-    if (leftStimulusRef.current) {
-      try { leftStimulusRef.current.pause(); } catch {}
+    if (logIntervalRef.current) clearInterval(logIntervalRef.current);
+    
+    if (leftStimulusRef.current) leftStimulusRef.current.pause();
+    if (rightStimulusRef.current) rightStimulusRef.current.pause();
+
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
     }
-    if (rightStimulusRef.current) {
-      try { rightStimulusRef.current.pause(); } catch {}
+
+    try {
+      const token = localStorage.getItem('token');
+      const finishRes = await fetch(`${API_BASE}/api/social-attention/finish`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ sessionId })
+      });
+
+      if (finishRes.ok) {
+        const results = await finishRes.json();
+        setTestResults(results);
+      }
+    } catch (err) {
+      console.error("Error finishing test:", err);
     }
-    onComplete(assessmentData);
   };
+
+  if (testResults) {
+    return (
+      <div className="social-attention-results-view">
+        <div className="results-card">
+          <FiCheckCircle size={64} color="#10b981" />
+          <h2>Social Attention Result</h2>
+          <div className="results-stats">
+            <div className="stat-row">
+              <span>Social Preference Score:</span>
+              <strong style={{ color: testResults.riskFlag ? '#ef4444' : '#10b981' }}>
+                {testResults.socialPreferenceScore.toFixed(1)}%
+              </strong>
+            </div>
+            <div className="stat-row">
+              <span>Social (Left) Time:</span>
+              <strong>{(testResults.leftLookTime / 1000).toFixed(1)}s</strong>
+            </div>
+            <div className="stat-row">
+              <span>Non-Social (Right) Time:</span>
+              <strong>{(testResults.rightLookTime / 1000).toFixed(1)}s</strong>
+            </div>
+          </div>
+          <div className="interpretation-box">
+             <p><strong>Interpretation:</strong> {testResults.clinicalSummary}</p>
+          </div>
+          <button className="finish-btn" onClick={() => onComplete(testResults)}>
+            Continue to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (cameraError) {
     return (
       <div className="game-error-state">
         <FiAlertTriangle size={48} color="#ef4444" />
-        <h3>Camera Required</h3>
+        <h3>Assessment Error</h3>
         <p>{cameraError}</p>
-        <button className="option-button correct" onClick={startTest}>Try Again</button>
+        <button className="option-button correct" onClick={() => window.location.reload()}>Reload Page</button>
       </div>
     );
   }
 
   return (
-    <div className="game-wrapper">
-      <div className="game-card" style={{ maxWidth: '900px' }}>
-        <div className="game-progress">Time Remaining: {timeLeft}s</div>
-        
-        {!isCapturing ? (
-          <div className="start-screen">
+    <div className="social-attention-test-fullscreen" ref={containerRef}>
+      {!isCapturing ? (
+        <div className="start-screen-clinical">
+          <div className="clinical-header">
             <h2>Social Attention Test</h2>
-            <p className="game-instruction">
-              {isLoadingModel ? "Loading tracking models..." : "Two videos will play side by side. We'll measure which one you prefer looking at."}
-            </p>
-            <button 
-              className="option-button correct" 
-              onClick={startTest}
-              disabled={isLoadingModel}
-            >
-              <FiCamera style={{ marginRight: '8px' }} />
-              {isLoadingModel ? "Initializing..." : "Start Test"}
-            </button>
+            <p>Behavioural Assessment (Preferential Looking Paradigm)</p>
           </div>
-        ) : (
-          <div className="social-attention-active">
-            <div className="split-screen-game">
-                <div className={`attention-side human ${currentGaze === 'left' ? 'focused' : ''}`}>
-                  <video
-                    ref={leftStimulusRef}
-                    className="stimulus-video"
-                    src="https://storage.googleapis.com/public-datasets-misc/behavioral/social-interaction-sample.mp4"
-                    muted
-                    loop
-                    playsInline
-                    preload="auto"
-                  />
-                  <p>Human Interaction</p>
+          <div className="clinical-instructions">
+            <p>Two videos will play side by side for 30 seconds. Gaze tracking will measure social preference.</p>
+            <div className="video-previews">
+                <div className="preview-box">
+                    <span>SOCIAL VIDEO (LEFT)</span>
+                    <video 
+                        src={videoSources.left}
+                        muted 
+                        playsInline 
+                        crossOrigin="anonymous"
+                        onCanPlay={() => setVideosReady(v => ({...v, left: true}))}
+                        onError={(e) => {
+                          console.error("Left Video Load Error:", e);
+                          setVideoSources(prev => ({...prev, left: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4"}));
+                        }}
+                        style={{ width: '100%', borderRadius: '8px', marginTop: '10px' }}
+                    />
                 </div>
-                <div className={`attention-side object ${currentGaze === 'right' ? 'focused' : ''}`}>
-                  <video
-                    ref={rightStimulusRef}
-                    className="stimulus-video"
-                    src="https://storage.googleapis.com/public-datasets-misc/behavioral/geometric-motion-sample.mp4"
-                    muted
-                    loop
-                    playsInline
-                    preload="auto"
-                  />
-                  <p>Moving Objects</p>
+                <div className="preview-box">
+                    <span>NON-SOCIAL VIDEO (RIGHT)</span>
+                    <video 
+                        src={videoSources.right}
+                        muted 
+                        playsInline 
+                        crossOrigin="anonymous"
+                        onCanPlay={() => setVideosReady(v => ({...v, right: true}))}
+                        onError={(e) => {
+                          console.error("Right Video Load Error:", e);
+                          setVideoSources(prev => ({...prev, right: "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"}));
+                        }}
+                        style={{ width: '100%', borderRadius: '8px', marginTop: '10px' }}
+                    />
                 </div>
-              </div>
-            
-            <div className="video-container tracking-hidden">
-              <video ref={videoRef} playsInline muted style={{ width: '100px', height: '75px' }} />
-              <div className="tracking-status">
-                <span className="status-dot pulsing"></span> Tracking Gaze
-              </div>
+            </div>
+            <p className="highlight-instruction">"Please let the child watch naturally. Assessment will begin in fullscreen."</p>
+          </div>
+          <button 
+            className="clinical-start-btn" 
+            onClick={startTest}
+            disabled={isLoadingModel}
+          >
+            {isLoadingModel ? <FiLoader className="spin" /> : "Start 30s Assessment"}
+          </button>
+        </div>
+      ) : (
+        <div className="clinical-test-active">
+          <div className="test-top-bar" style={{ zIndex: 100 }}>
+            <h3>Social Attention Test</h3>
+            <div className="test-progress-container">
+                <div className="test-progress-bar" style={{ width: `${(30 - timeLeft) / 30 * 100}%` }}></div>
+            </div>
+            <span className="test-timer">{timeLeft}s</span>
+          </div>
+
+          <div className="clinical-video-panels" style={{ display: 'flex', width: '100vw', height: '100vh', position: 'absolute', top: 0, left: 0 }}>
+            <div className="video-panel left-social" style={{ flex: 1, overflow: 'hidden' }}>
+                <video 
+                  ref={leftStimulusRef}
+                  src={videoSources.left}
+                  muted 
+                  playsInline 
+                  loop
+                  crossOrigin="anonymous"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                />
+            </div>
+            <div className="video-panel right-non-social" style={{ flex: 1, overflow: 'hidden' }}>
+                <video 
+                  ref={rightStimulusRef}
+                  src={videoSources.right}
+                  muted 
+                  playsInline 
+                  loop
+                  crossOrigin="anonymous"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                />
             </div>
           </div>
-        )}
-      </div>
+
+          <div className="clinical-bottom-instruction" style={{ zIndex: 100, position: 'absolute', bottom: '20px', width: '100%', textAlign: 'center', color: 'white', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>
+            "Please let the child watch naturally. Gaze Tracking Active."
+          </div>
+        </div>
+      )}
+      {/* Hidden video for MediaPipe processing - MUST be always present in DOM for refs to work */}
+      <video 
+        ref={videoRef} 
+        playsInline 
+        muted 
+        style={{ display: 'none', position: 'absolute', pointerEvents: 'none' }} 
+      />
     </div>
   );
 };

@@ -55,10 +55,11 @@ if (!fs.existsSync(gazeUploadsDir)) fs.mkdirSync(gazeUploadsDir, { recursive: tr
 const credentialsDir = path.join(__dirname, 'credentials');
 if (!fs.existsSync(credentialsDir)) fs.mkdirSync(credentialsDir, { recursive: true });
 
-// Serve static files - CRITICAL for guest session images
+// Serve static files - CRITICAL for stimulus videos and guest session images
 app.use('/credentials', express.static(credentialsDir));
-app.use('/uploads', express.static(uploadsDir)); // Serve all uploads
-app.use('/uploads/gaze', express.static(gazeUploadsDir)); // Specifically serve gaze images
+app.use('/uploads', express.static(uploadsDir)); 
+app.use('/uploads/gaze', express.static(gazeUploadsDir)); 
+app.use('/videos', express.static(path.join(__dirname, 'public/videos')));
 
 console.log('📁 Serving uploads from:', uploadsDir);
 console.log('📸 Serving gaze images from:', gazeUploadsDir);
@@ -136,6 +137,15 @@ try {
   app.use('/api/behavioral', require('./routes/behavioral'));
 } catch (e) {
   console.error('Behavioral Routes Error:', e.message);
+}
+
+// ✅ Social Attention Test Routes
+try {
+  const socialAttentionRoutes = require('./routes/socialAttention');
+  app.use('/api/social-attention', socialAttentionRoutes);
+  console.log('✅ Social Attention Routes Registered');
+} catch (e) {
+  console.error('Social Attention Routes Error:', e.message);
 }
 
 // ✅ MRI Scan Model: accept file upload and return stub JSON
@@ -298,7 +308,7 @@ app.post('/api/predict-gaze-snapshot', upload.single('file'), async (req, res) =
 });
 
 // ✅ Start Server + Connect DB
-const PORT = process.env.PORT || 5000;
+const PORT = 5000;
 
 async function start() {
   const mongoUri = process.env.MONGO_URI;

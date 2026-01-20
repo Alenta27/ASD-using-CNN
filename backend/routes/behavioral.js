@@ -152,7 +152,15 @@ router.get('/analyze/:studentId', async (req, res) => {
       teacherId 
     }).sort({ completedAt: -1 });
 
-    if (assessments.length === 0) {
+    // Fetch latest Social Attention Session
+    const SocialAttentionSession = require('../models/SocialAttentionSession');
+    const latestSocialAttention = await SocialAttentionSession.findOne({
+      studentId,
+      teacherId,
+      status: 'COMPLETED'
+    }).sort({ endTime: -1 });
+
+    if (assessments.length === 0 && !latestSocialAttention) {
       return res.status(404).json({ 
         message: 'No assessments found for this student. Please complete at least one assessment game.' 
       });
@@ -172,9 +180,24 @@ router.get('/analyze/:studentId', async (req, res) => {
     ];
 
     gameTypes.forEach(type => {
-      const gameAssessments = assessments.filter(a => a.assessmentType === type);
-      if (gameAssessments.length > 0) {
-        gameData[type] = gameAssessments[0]; // Use latest assessment
+      if (type === 'social-attention' && latestSocialAttention) {
+        gameData[type] = {
+          assessmentType: 'social-attention',
+          score: latestSocialAttention.socialPreferenceScore,
+          metrics: {
+            socialPreferenceScore: latestSocialAttention.socialPreferenceScore,
+            leftPercentage: latestSocialAttention.leftPercentage,
+            rightPercentage: latestSocialAttention.rightPercentage,
+            leftLookTime: latestSocialAttention.leftLookTime,
+            rightLookTime: latestSocialAttention.rightLookTime
+          },
+          completedAt: latestSocialAttention.endTime
+        };
+      } else {
+        const gameAssessments = assessments.filter(a => a.assessmentType === type);
+        if (gameAssessments.length > 0) {
+          gameData[type] = gameAssessments[0]; // Use latest assessment
+        }
       }
     });
 
@@ -253,7 +276,11 @@ function normalizeGameMetrics(gameData) {
   // Social Attention: social understanding
   if (gameData['social-attention']) {
     const metrics = gameData['social-attention'].metrics || {};
-    normalized.socialUnderstandingScore = metrics.socialResponseTime || 0;
+    normalized.socialUnderstandingScore = metrics.socialPreferenceScore || 0;
+    // Social attention specifically also informs eye contact duration if eye-gaze tracker is missing
+    if (normalized.eyeContactDuration === 0) {
+      normalized.eyeContactDuration = metrics.socialPreferenceScore || 0;
+    }
   }
 
   // Imitation: imitation success
@@ -265,7 +292,10 @@ function normalizeGameMetrics(gameData) {
   // Sound Sensitivity: sensory reaction
   if (gameData['sound-sensitivity']) {
     const metrics = gameData['sound-sensitivity'].metrics || {};
-    normalized.sensoryReactionLevel = metrics.sensoryResponseTime || 0;
+    // Convert reaction score (0-2) to 0-100 scale for normalization
+    normalized.sensoryReactionLevel = metrics.avgReactionScore !== undefined ? 
+      (metrics.avgReactionScore * 50) : 
+      (metrics.sensoryResponseTime || 0);
   }
 
   // Pattern Fixation: repetitive behavior
@@ -289,7 +319,7 @@ function normalizeGameMetrics(gameData) {
   // Turn-Taking: reciprocity
   if (gameData['turn-taking']) {
     const metrics = gameData['turn-taking'].metrics || {};
-    normalized.turnTakingBehavior = metrics.waitingBehaviorScore || gameData['turn-taking'].score || 0;
+    normalized.turnTakingBehavior = metrics.waitingBehaviorScore || metrics.turnTakingAccuracy || gameData['turn-taking'].score || 0;
   }
 
   return normalized;
@@ -300,32 +330,32 @@ function detectBehavioralPatterns(normalizedMetrics, gameData) {
   const profile = {
     socialAttention: {
       score: normalizedMetrics.eyeContactDuration,
-      level: normalizedMetrics.eyeContactDuration > 60 ? 'Strong' : normalizedMetrics.eyeContactDuration > 40 ? 'Moderate' : 'Limited',
+      level: normalizedMetrics.eyeContactDuration > 60 ? 'Strong' : normalizedMetrics.eyeContactDuration > 40 ? 'Medium' : 'Limited',
       traits: []
     },
     emotionalRecognition: {
       score: normalizedMetrics.accuracy,
-      level: normalizedMetrics.accuracy > 80 ? 'Strong' : normalizedMetrics.accuracy > 50 ? 'Moderate' : 'Challenging',
+      level: normalizedMetrics.accuracy > 80 ? 'Strong' : normalizedMetrics.accuracy > 50 ? 'Medium' : 'Challenging',
       traits: []
     },
     sensoryProcessing: {
       score: 100 - normalizedMetrics.sensoryReactionLevel, // Inverse: lower reaction = better processing
-      level: normalizedMetrics.sensoryReactionLevel < 30 ? 'Typical' : normalizedMetrics.sensoryReactionLevel < 60 ? 'Moderate Sensitivity' : 'High Sensitivity',
+      level: normalizedMetrics.sensoryReactionLevel < 30 ? 'Typical' : normalizedMetrics.sensoryReactionLevel < 60 ? 'Medium Sensitivity' : 'High Sensitivity',
       traits: []
     },
     imitationAbility: {
       score: normalizedMetrics.imitationSuccess,
-      level: normalizedMetrics.imitationSuccess > 70 ? 'Strong' : normalizedMetrics.imitationSuccess > 40 ? 'Moderate' : 'Needs Support',
+      level: normalizedMetrics.imitationSuccess > 70 ? 'Strong' : normalizedMetrics.imitationSuccess > 40 ? 'Medium' : 'Needs Support',
       traits: []
     },
     repetitiveBehavior: {
       score: normalizedMetrics.repetitiveSelectionFrequency,
-      level: normalizedMetrics.repetitiveSelectionFrequency < 30 ? 'Minimal' : normalizedMetrics.repetitiveSelectionFrequency < 60 ? 'Moderate' : 'Elevated',
+      level: normalizedMetrics.repetitiveSelectionFrequency < 30 ? 'Minimal' : normalizedMetrics.repetitiveSelectionFrequency < 60 ? 'Medium' : 'Elevated',
       traits: []
     },
     socialReciprocity: {
       score: normalizedMetrics.turnTakingBehavior,
-      level: normalizedMetrics.turnTakingBehavior > 70 ? 'Strong' : normalizedMetrics.turnTakingBehavior > 40 ? 'Moderate' : 'Limited',
+      level: normalizedMetrics.turnTakingBehavior > 70 ? 'Strong' : normalizedMetrics.turnTakingBehavior > 40 ? 'Medium' : 'Limited',
       traits: []
     }
   };
@@ -402,20 +432,20 @@ function calculateRiskLevel(normalizedMetrics, behavioralProfile) {
   if (probabilityScore >= 70) {
     riskLevel = 'High';
   } else if (probabilityScore >= 40) {
-    riskLevel = 'Moderate';
+    riskLevel = 'Medium';
   }
 
   // Calculate probability breakdown
   const highProb = riskLevel === 'High' ? probabilityScore : (probabilityScore > 50 ? probabilityScore - 20 : probabilityScore / 3);
-  const moderateProb = riskLevel === 'Moderate' ? probabilityScore : (probabilityScore >= 40 ? probabilityScore - 10 : probabilityScore / 2);
-  const lowProb = 100 - highProb - moderateProb;
+  const mediumProb = riskLevel === 'Medium' ? probabilityScore : (probabilityScore >= 40 ? probabilityScore - 10 : probabilityScore / 2);
+  const lowProb = 100 - highProb - mediumProb;
 
   return {
     riskLevel,
     probabilityScore: Math.round(probabilityScore),
     probabilityBreakdown: {
       Low: Math.round(Math.max(0, lowProb)),
-      Moderate: Math.round(Math.max(0, moderateProb)),
+      Medium: Math.round(Math.max(0, mediumProb)),
       High: Math.round(Math.max(0, highProb))
     },
     contributingFactors: factors
@@ -444,7 +474,7 @@ function generateGameWiseAnalysis(gameData, normalizedMetrics) {
       let interpretation = '';
       
       if (gameType === 'emotion-match') {
-        interpretation = score > 80 ? 'Strong emotional recognition abilities' : score > 50 ? 'Moderate emotional recognition' : 'Challenges with emotional recognition';
+        interpretation = score > 80 ? 'Strong emotional recognition abilities' : score > 50 ? 'Medium emotional recognition' : 'Challenges with emotional recognition';
       } else if (gameType === 'eye-gaze-tracker') {
         interpretation = normalizedMetrics.eyeContactDuration > 60 ? 'Good eye contact and attention patterns' : normalizedMetrics.eyeContactDuration > 40 ? 'Variable attention patterns' : 'Limited eye contact observed';
       } else if (gameType === 'social-attention') {
@@ -452,7 +482,7 @@ function generateGameWiseAnalysis(gameData, normalizedMetrics) {
       } else if (gameType === 'imitation') {
         interpretation = normalizedMetrics.imitationSuccess > 70 ? 'Strong imitation skills demonstrated' : normalizedMetrics.imitationSuccess > 40 ? 'Developing imitation abilities' : 'Limited imitation observed';
       } else if (gameType === 'sound-sensitivity') {
-        interpretation = normalizedMetrics.sensoryReactionLevel < 30 ? 'Typical sensory responses' : normalizedMetrics.sensoryReactionLevel < 60 ? 'Moderate sensory sensitivity' : 'Elevated sensitivity to auditory stimuli';
+        interpretation = normalizedMetrics.sensoryReactionLevel < 30 ? 'Typical sensory responses' : normalizedMetrics.sensoryReactionLevel < 60 ? 'Medium sensory sensitivity' : 'Elevated sensitivity to auditory stimuli';
       } else if (gameType === 'pattern-fixation') {
         interpretation = normalizedMetrics.repetitiveSelectionFrequency < 30 ? 'Flexible attention without excessive repetition' : normalizedMetrics.repetitiveSelectionFrequency < 60 ? 'Some repetitive patterns noted' : 'Elevated repetitive visual interests';
       } else if (gameType === 'story-understanding') {
@@ -532,9 +562,9 @@ function generateRecommendations(riskAnalysis, behavioralProfile) {
         'Share behavioral assessment data with healthcare provider'
       ]
     });
-  } else if (riskAnalysis.riskLevel === 'Moderate') {
+  } else if (riskAnalysis.riskLevel === 'Medium') {
     recommendations.push({
-      priority: 'Moderate',
+      priority: 'Medium',
       category: 'Continued Monitoring',
       recommendation: 'Continue regular behavioral assessments and monitor progress. Consider consultation with specialists if concerns persist.',
       actionItems: [

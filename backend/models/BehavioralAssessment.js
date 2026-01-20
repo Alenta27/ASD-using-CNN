@@ -66,6 +66,12 @@ const BehavioralAssessmentSchema = new mongoose.Schema({
     eyeContactTimeMs: Number,
     objectFocusTimeMs: Number,
     totalFrames: Number,
+    // Sound Sensitivity metrics
+    avgReactionScore: Number,
+    highSensitivityCount: Number,
+    moderateSensitivityCount: Number,
+    reactionCount: Number,
+    overallLevel: String,
     // Imitation game metrics
     totalActions: Number,
     correctImitations: Number,
