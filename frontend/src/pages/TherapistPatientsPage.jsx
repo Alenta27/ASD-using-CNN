@@ -181,11 +181,11 @@ const TherapistPatientsPage = () => {
       {/* Sidebar */}
       <div className="sidebar">
         <div className="sidebar-logo">
-          <h2>NeuroTrack</h2>
+          <h2>CORTEXA</h2>
         </div>
         
         <nav className="sidebar-nav">
-          <button onClick={() => handleNavClick('/therapist')} className="nav-item">
+          <button onClick={() => handleNavClick('/therapist/dashboard')} className="nav-item">
             <FiHome className="nav-icon" />
             <span>Dashboard</span>
           </button>
@@ -193,9 +193,13 @@ const TherapistPatientsPage = () => {
             <FiUsers className="nav-icon" />
             <span>My Patients</span>
           </button>
-          <button onClick={() => handleNavClick('/therapist/appointments')} className="nav-item">
+          <button onClick={() => handleNavClick('/therapist/schedule')} className="nav-item">
             <FiCalendar className="nav-icon" />
             <span>Schedule</span>
+          </button>
+          <button onClick={() => handleNavClick('/therapist/appointments')} className="nav-item">
+            <FiCalendar className="nav-icon" />
+            <span>My Appointments</span>
           </button>
           <button onClick={() => handleNavClick('/therapist/slots')} className="nav-item">
             <FiCalendar className="nav-icon" />
@@ -292,25 +296,37 @@ const TherapistPatientsPage = () => {
             <div className="patients-grid">
               {patients.map((patient) => (
                 <div key={patient._id} className="patient-card">
+                  {/* Patient Header - Name & Status */}
                   <div className="patient-header">
                     <h3 className="patient-name">{patient.name}</h3>
                     <span className="patient-status active">Active</span>
                   </div>
                   
+                  {/* Patient Info - Details */}
                   <div className="patient-info">
-                    <p><strong>Age:</strong> {patient.age}</p>
+                    <p><strong>Age:</strong> {patient.age} years</p>
                     <p><strong>Gender:</strong> {patient.gender}</p>
-                    <p><strong>Medical History:</strong> {patient.medical_history || 'N/A'}</p>
+                    <p><strong>Medical History:</strong> {patient.medical_history || 'No medical history recorded'}</p>
                   </div>
 
+                  {/* Patient Actions - Buttons */}
                   <div className="patient-actions">
-                    <button className="btn-primary" onClick={() => navigate(`/therapist/patients/${patient._id}`)}>
+                    <button 
+                      className="btn-primary" 
+                      onClick={() => navigate(`/therapist/patients/${patient._id}`)}
+                    >
                       View Profile
                     </button>
-                    <button className="btn-secondary" onClick={() => navigate('/therapist/appointments')}>
+                    <button 
+                      className="btn-secondary" 
+                      onClick={() => navigate('/therapist/appointments')}
+                    >
                       View Appointments
                     </button>
-                    <button className="btn-success" onClick={() => navigate(`/live-gaze-analysis?patientId=${patient._id}`)} style={{ backgroundColor: '#10b981', color: 'white', marginTop: '10px' }}>
+                    <button 
+                      className="btn-success" 
+                      onClick={() => navigate(`/live-gaze-analysis?patientId=${patient._id}`)}
+                    >
                       Start Live Gaze
                     </button>
                   </div>

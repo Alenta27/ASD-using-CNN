@@ -66,6 +66,70 @@ router.get('/clients', requireResourceAccess('children'), async (req, res) => {
   }
 });
 
+// Get specific patient details by ID
+router.get('/patient/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find patient and verify it belongs to this therapist
+    const patient = await Patient.findOne({ 
+      _id: id, 
+      therapist_user_id: req.user.id 
+    });
+    
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found or access denied' });
+    }
+    
+    res.json(patient);
+  } catch (error) {
+    console.error('Error fetching patient details:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get patient's screening history
+router.get('/patient/:id/screenings', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Verify patient belongs to this therapist
+    const patient = await Patient.findOne({ 
+      _id: id, 
+      therapist_user_id: req.user.id 
+    });
+    
+    if (!patient) {
+      return res.status(404).json({ message: 'Patient not found or access denied' });
+    }
+    
+    // Fetch gaze sessions for this patient
+    const gazeSessions = await GazeSession.find({
+      patientId: id,
+      isGuest: false
+    })
+    .select('sessionType module status snapshots createdAt result')
+    .sort({ createdAt: -1 })
+    .limit(20);
+    
+    // Format screening data
+    const screenings = gazeSessions.map(session => ({
+      _id: session._id,
+      screeningType: 'gaze',
+      sessionType: session.sessionType || session.module,
+      status: session.status,
+      result: session.result,
+      snapshots: session.snapshots || [],
+      createdAt: session.createdAt
+    }));
+    
+    res.json(screenings);
+  } catch (error) {
+    console.error('Error fetching patient screenings:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // Get today's appointments
 router.get('/appointments/today', async (req, res) => {
   try {

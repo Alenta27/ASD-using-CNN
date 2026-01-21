@@ -9,8 +9,9 @@ import './TherapistDashboard.css';
 
 const Sidebar = ({ activeNav, onNavClick, onLogout, therapistName }) => {
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: FiHome, path: '/therapist' },
+    { id: 'dashboard', label: 'Dashboard', icon: FiHome, path: '/therapist/dashboard' },
     { id: 'patients', label: 'My Patients', icon: FiUsers, path: '/therapist/patients' },
+    { id: 'schedule', label: 'Schedule', icon: FiCalendar, path: '/therapist/schedule' },
     { id: 'appointments', label: 'My Appointments', icon: FiCalendar, path: '/therapist/appointments' },
     { id: 'slots', label: 'Manage Slots', icon: FiCalendar, path: '/therapist/slots' },
     { id: 'screening', label: 'Screening Results', icon: FiFileText, path: '/therapist/questionnaires' },
@@ -51,9 +52,10 @@ const Sidebar = ({ activeNav, onNavClick, onLogout, therapistName }) => {
   );
 };
 
-const MainContent = ({ username, therapistName, appointments, clients, loading, onOpenAssistant }) => {
+const MainContent = ({ username, therapistName, appointments, clients, loading, onOpenAssistant, navigate }) => {
   const [selectedPatientId, setSelectedPatientId] = useState(null);
   const [selectedSessionId, setSelectedSessionId] = useState(null);
+  const [selectedActivityPatient, setSelectedActivityPatient] = useState(null);
   
   useEffect(() => {
     if (Array.isArray(clients) && clients.length > 0 && !selectedPatientId) {
@@ -68,8 +70,9 @@ const MainContent = ({ username, therapistName, appointments, clients, loading, 
   const recentActivity = Array.isArray(clients)
     ? clients.slice(0, 3).map(client => ({
         name: client.name,
+        patientId: client._id,
         activity: 'Completed new questionnaire',
-        date: new Date(client.updatedAt).toLocaleDateString(),
+        date: new Date(client.updatedAt || client.createdAt).toLocaleDateString(),
       }))
     : [];
 
@@ -96,7 +99,7 @@ const MainContent = ({ username, therapistName, appointments, clients, loading, 
       <div className="content-section">
         <div className="section-header">
           <h2 className="section-title">Upcoming Appointments</h2>
-          <button className="view-all-btn">View All</button>
+          <button className="view-all-btn" onClick={() => navigate('/therapist/appointments')}>View All</button>
         </div>
         
         <div className="appointments-grid">
@@ -122,7 +125,16 @@ const MainContent = ({ username, therapistName, appointments, clients, loading, 
                   </p>
                   {appointment.notes && <p className="appointment-notes">{appointment.notes}</p>}
                 </div>
-                <button className="appointment-action-btn">
+                <button 
+                  className="appointment-action-btn"
+                  onClick={() => {
+                    if (appointment.clientId || appointment.childId) {
+                      navigate(`/therapist/patients/${appointment.clientId || appointment.childId}`);
+                    } else {
+                      alert('Patient ID not available for this appointment');
+                    }
+                  }}
+                >
                   View Patient Profile
                 </button>
               </div>
@@ -134,7 +146,7 @@ const MainContent = ({ username, therapistName, appointments, clients, loading, 
       <div className="content-section">
         <div className="section-header">
           <h2 className="section-title">Recent Patient Activity</h2>
-          <button className="view-all-btn">View All</button>
+          <button className="view-all-btn" onClick={() => navigate('/therapist/patients')}>View All</button>
         </div>
         
         <div className="activity-grid">
@@ -151,7 +163,18 @@ const MainContent = ({ username, therapistName, appointments, clients, loading, 
                 </div>
                 <div className="activity-footer">
                   <p className="activity-date">{activity.date}</p>
-                  <button className="activity-action-btn">View Details</button>
+                  <button 
+                    className="activity-action-btn"
+                    onClick={() => {
+                      if (activity.patientId) {
+                        navigate(`/therapist/patients/${activity.patientId}`);
+                      } else {
+                        alert('Patient details not available');
+                      }
+                    }}
+                  >
+                    View Details
+                  </button>
                 </div>
               </div>
             ))
@@ -492,6 +515,7 @@ Creating Sensory-Friendly Spaces:
         clients={clients}
         loading={loading}
         onOpenAssistant={openAssistant}
+        navigate={navigate}
       />
       {showAssistant && (
         <div className="assistant-overlay">

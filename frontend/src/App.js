@@ -29,9 +29,11 @@ import TeacherBehavioralAssessmentsPage from './pages/TeacherBehavioralAssessmen
 import TeacherBehavioralAssessmentDetailPage from './pages/TeacherBehavioralAssessmentDetailPage';
 import BehavioralAnalysisReportPage from './pages/BehavioralAnalysisReportPage';
 import TherapistPatientsPage from './pages/TherapistPatientsPage';
+import TherapistPatientProfilePage from './pages/TherapistPatientProfilePage';
 import TherapistQuestionnairesPage from './pages/TherapistQuestionnairesPage';
 import TherapistSlotManagement from './pages/TherapistSlotManagement';
 import TherapistAppointmentsPage from './pages/TherapistAppointmentsPage';
+import TherapistSchedulePage from './pages/TherapistSchedulePage';
 import ResearchUsersPage from './pages/ResearchUsersPage';
 import ResearchDatasetPage from './pages/ResearchDatasetPage';
 import LearnMorePage from './pages/LearnMorePage';
@@ -101,8 +103,11 @@ function App() {
           <Route path="/admin/analytics" element={<AdminDashboard />} />
           <Route path="/admin/trends" element={<AdminDashboard />} />
           <Route path="/therapist" element={<TherapistDashboard />} />
+          <Route path="/therapist/dashboard" element={<TherapistDashboard />} />
           <Route path="/therapist/patients" element={<TherapistPatientsPage />} />
+          <Route path="/therapist/patients/:id" element={<TherapistPatientProfilePage />} />
           <Route path="/therapist/appointments" element={<TherapistAppointmentsPage />} />
+          <Route path="/therapist/schedule" element={<TherapistSchedulePage />} />
           <Route path="/therapist/questionnaires" element={<TherapistQuestionnairesPage />} />
           <Route path="/therapist/slots" element={<TherapistSlotManagement />} />
           <Route path="/therapist/ai-analysis" element={<TherapistDashboard />} />

@@ -521,6 +521,48 @@ const TeacherBehavioralAssessmentsPage = () => {
                 </div>
               )}
 
+              {/* Imitation Specific Metrics */}
+              {(lastAssessmentData.assessmentType === 'imitation' || lastAssessmentData.game === 'Imitation') && (
+                <div className="results-section">
+                  <h4>Imitation Performance</h4>
+                  <div className="results-grid">
+                    <div className="result-item">
+                      <span className="result-label">Overall Accuracy:</span>
+                      <span className="result-value highlight">{lastAssessmentData.metrics?.imitationAccuracy || lastAssessmentData.score}%</span>
+                    </div>
+                    <div className="result-item">
+                      <span className="result-label">Avg Reaction Time:</span>
+                      <span className="result-value highlight">{lastAssessmentData.metrics?.averageReactionTime || 0}ms</span>
+                    </div>
+                    <div className="result-item">
+                      <span className="result-label">Actions Completed:</span>
+                      <span className="result-value">{lastAssessmentData.metrics?.correctImitations || 0} / {lastAssessmentData.metrics?.totalActions || 0}</span>
+                    </div>
+                    <div className="result-item">
+                      <span className="result-label">Mean Similarity:</span>
+                      <span className="result-value">{lastAssessmentData.metrics?.meanSimilarityScore || 0}</span>
+                    </div>
+                  </div>
+                  
+                  {lastAssessmentData.rawGameData && Array.isArray(lastAssessmentData.rawGameData) && (
+                    <div className="imitation-breakdown" style={{ marginTop: '15px' }}>
+                      <h5>Action Breakdown</h5>
+                      <div className="breakdown-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '8px', marginTop: '8px' }}>
+                        {lastAssessmentData.rawGameData.map((res, idx) => (
+                          <div key={idx} style={{ padding: '8px', borderRadius: '6px', backgroundColor: '#f8fafc', border: `1px solid ${res.success ? '#dcfce7' : '#fee2e2'}` }}>
+                            <div style={{ fontSize: '12px', fontWeight: 'bold' }}>{res.actionName}</div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                              <span style={{ fontSize: '11px', color: res.success ? '#10b981' : '#ef4444' }}>{res.status}</span>
+                              <span style={{ fontSize: '10px', color: '#64748b' }}>{Math.round(res.confidenceScore * 100)}%</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* General Metrics */}
               {lastAssessmentData.metrics && (
                 <div className="results-section">

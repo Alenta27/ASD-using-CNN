@@ -17,9 +17,10 @@ const ACTIONS = [
 ];
 
 // Thresholds
-const SUSTAIN_MS_DEFAULT = 800; // default sustained time
-const SUSTAIN_MS_HANDS_UP = 1000; // hands up stricter
-const CONFIDENCE_MIN = 0.8;
+const SUSTAIN_FRAMES = 8; // Stable detection for 8 frames (~250-300ms)
+const CONFIDENCE_CORRECT = 0.55; // Further relaxed from 0.65
+const CONFIDENCE_PARTIAL = 0.3;  // Further relaxed from 0.4
+const FALLBACK_THRESHOLD = 0.2; // Even lower for "Review/Demo" safe fallback
 
 const ImitationGame = ({ studentId, onComplete }) => {
   // State machine: idle → camera_ready → demo_action → imitate → validating → feedback → next_action → final_results
@@ -32,6 +33,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
   const [cameraReady, setCameraReady] = useState(false);
 
   const [feedbackText, setFeedbackText] = useState(''); // live UI feedback
+  const [detectionState, setDetectionState] = useState('none'); // 'none', 'partial', 'correct'
   const [confidencePct, setConfidencePct] = useState(0);
   const [actionResults, setActionResults] = useState([]);
 
@@ -53,8 +55,8 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
   // Gesture tracking
   const lastVideoTimeRef = useRef(-1);
+  const frameCounterRef = useRef({ correct: 0, partial: 0 }); 
   const historyRef = useRef([]); // last N frame detections for the current action
-  const sustainRef = useRef({ active: false, start: null, firstCrossTime: null });
   const waveDirRef = useRef({ lastX: null, lastDir: null, changes: 0 });
   const clapCycleRef = useRef({ lastDist: null, cycles: 0 });
   const handsRaisedRef = useRef({ start: null });
@@ -150,9 +152,10 @@ const ImitationGame = ({ studentId, onComplete }) => {
     }
     setPhase('demo_action');
     setFeedbackText('Get ready...');
+    setDetectionState('none');
     setConfidencePct(0);
     historyRef.current = [];
-    sustainRef.current = { active: false, start: null, firstCrossTime: null };
+    frameCounterRef.current = { correct: 0, partial: 0 };
     waveDirRef.current = { lastX: null, lastDir: null, changes: 0 };
     clapCycleRef.current = { lastDist: null, cycles: 0 };
     handsRaisedRef.current = { start: null };
@@ -190,7 +193,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
         clearInterval(actionTimerRef.current);
         actionTimerRef.current = null;
         // time out: fail if not already validated
-        concludeAction(false, 0);
+        concludeAction('fail', 0);
       }
     }, 1000);
 
@@ -212,34 +215,43 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
         const action = ACTIONS[currentIndex];
         const det = detectAction(action.id, pose, hands, face);
+        
+        // Debug logging for developers to see why it fails
+        if (timestamp % 20 === 0) { // log every ~20th frame to avoid flood
+            console.log(`Action: ${action.id}, Confidence: ${det.confidence}, Valid: ${det.validNow}`);
+            if (action.id === 'smile' && face?.faceBlendshapes?.[0]) {
+                const s = face.faceBlendshapes[0].categories;
+                const sl = s.find(c => c.categoryName === 'mouthSmileLeft')?.score;
+                const sr = s.find(c => c.categoryName === 'mouthSmileRight')?.score;
+                console.log(`Raw Smile Scores - Left: ${sl}, Right: ${sr}`);
+            }
+        }
+
         const conf = Math.max(0, Math.min(1, det.confidence || 0));
         setConfidencePct(Math.round(conf * 100));
 
-        // Update live feedback
-        if (conf >= CONFIDENCE_MIN) {
-          setFeedbackText('Potential match… validating');
+        // State & Frame Validation
+        if (conf >= CONFIDENCE_CORRECT) {
+          frameCounterRef.current.correct += 1;
+          setDetectionState('correct');
+          setFeedbackText('Looking good! Keep going...');
+        } else if (conf >= CONFIDENCE_PARTIAL || (conf >= FALLBACK_THRESHOLD && det.validNow)) {
+          frameCounterRef.current.partial += 1;
+          setDetectionState('partial');
+          setFeedbackText('Close! Try a bit more...');
         } else {
+          // Slowly decay frame counters if lost
+          frameCounterRef.current.correct = Math.max(0, frameCounterRef.current.correct - 0.5);
+          frameCounterRef.current.partial = Math.max(0, frameCounterRef.current.partial - 0.5);
+          setDetectionState('none');
           setFeedbackText('Detecting gesture…');
         }
 
-        // Sustained validation
-        const requiredMs = action.id === 'hands-up' ? SUSTAIN_MS_HANDS_UP : SUSTAIN_MS_DEFAULT;
-        if (conf >= CONFIDENCE_MIN && det.validNow) {
-          if (!sustainRef.current.active) {
-            sustainRef.current = { active: true, start: timestamp, firstCrossTime: timestamp };
-          }
-          // biomechanical rule trackers may update inside detectors (e.g., cycles/oscillations)
-          const sustained = timestamp - sustainRef.current.start;
-          if (sustained >= requiredMs && det.biomechanicsOK) {
-            setFeedbackText('Gesture detected ✔');
-            clearInterval(actionTimerRef.current);
-            actionTimerRef.current = null;
-            concludeAction(true, conf);
-            return;
-          }
-        } else {
-          // reset sustain window if drops below threshold or rules fail
-          sustainRef.current = { active: false, start: null, firstCrossTime: null };
+        // Logic for concluding: 
+        // If we hit SUSTAIN_FRAMES for correct -> Instant success
+        if (frameCounterRef.current.correct >= SUSTAIN_FRAMES) {
+          concludeAction('correct', conf);
+          return;
         }
       } catch (e) {
         console.error('Frame process error', e);
@@ -250,30 +262,45 @@ const ImitationGame = ({ studentId, onComplete }) => {
   };
 
   // Conclude one action and move forward
-  const concludeAction = (success, finalConf) => {
+  const concludeAction = (status, finalConf) => {
     setPhase('feedback');
-    setFeedbackText(success ? 'Gesture detected ✔' : 'Not detected ✖');
-
-    // Compute reactionTimeMs
-    let reactionTimeMs = 0;
-    if (success && sustainRef.current.firstCrossTime && actionStartTime) {
-      reactionTimeMs = sustainRef.current.firstCrossTime - actionStartTime;
+    
+    // Status can be 'correct', 'partial', or 'fail' (if time runs out)
+    let displayStatus = status;
+    if (status === 'fail') {
+        // Final fallback check: if they had some partial success but timed out, 
+        // or if they had ANY sustained partial frames, give them 'partial'
+        if (frameCounterRef.current.partial >= SUSTAIN_FRAMES || frameCounterRef.current.correct >= 3) {
+            displayStatus = 'partial';
+        } else {
+            displayStatus = 'incorrect';
+        }
     }
+
+    setFeedbackText(
+        displayStatus === 'correct' ? 'Great job! ✅' : 
+        displayStatus === 'partial' ? 'Almost there! 🟡' : 'Not detected ❌'
+    );
+    setDetectionState(displayStatus === 'correct' ? 'correct' : displayStatus === 'partial' ? 'partial' : 'none');
 
     const action = ACTIONS[currentIndex];
     const result = {
       actionName: action.name,
-      success: !!success,
+      status: displayStatus, // 'correct', 'partial', 'incorrect'
+      success: displayStatus === 'correct' || displayStatus === 'partial',
       confidenceScore: Number((finalConf || 0).toFixed(2)),
-      reactionTimeMs: Math.max(0, Math.round(reactionTimeMs))
+      reactionTimeMs: actionStartTime ? Date.now() - actionStartTime : 0
     };
     setActionResults(prev => [...prev, result]);
+
+    if (actionTimerRef.current) clearInterval(actionTimerRef.current);
+    actionTimerRef.current = null;
 
     // short feedback pause then next action
     setTimeout(() => {
       setCurrentIndex(i => i + 1);
       nextPhaseDemo();
-    }, 1200);
+    }, 1500);
   };
 
   // Detector dispatcher
@@ -310,46 +337,46 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const hl = getHands(hands);
     if (hl.length < 2) {
       clapCycleRef.current.lastDist = null;
-      return { confidence: 0, validNow: false, biomechanicsOK: false };
+      return { confidence: 0, validNow: false };
     }
     const l = hl[0][0]; // left wrist approx
     const r = hl[1][0];
-    if (!l || !r) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    if (!l || !r) return { confidence: 0, validNow: false };
 
     const dist = Math.hypot(l.x - r.x, l.y - r.y);
     let cycles = clapCycleRef.current.cycles;
     let lastDist = clapCycleRef.current.lastDist;
 
     if (lastDist !== null) {
-      const reduction = (lastDist - dist) / Math.max(lastDist, 1e-6);
-      if (reduction >= 0.4 && dist < 0.15) {
-        // contact
-        cycles += 1;
+      // More lenient contact threshold
+      if (dist < 0.25) {
+        if (lastDist > dist + 0.015) cycles += 0.5;
       }
     }
     clapCycleRef.current = { lastDist: dist, cycles };
 
-    const hasCycles = cycles >= 2;
-    const conf = hasCycles ? 0.85 : Math.max(0, Math.min(0.7, cycles * 0.35));
-    return { confidence: conf, validNow: dist < 0.25, biomechanicsOK: hasCycles };
+    // Relaxed confidence levels
+    const conf = dist < 0.22 ? 0.9 : dist < 0.35 ? 0.5 : 0;
+    return { confidence: conf, validNow: dist < 0.4 };
   };
 
-  // 2) Wave – left-right oscillations ≥ 3
+  // 2) Wave – left-right oscillations
   const detectWave = (hands) => {
     const hl = getHands(hands);
     if (hl.length < 1) {
       waveDirRef.current = { lastX: null, lastDir: null, changes: 0 };
-      return { confidence: 0, validNow: false, biomechanicsOK: false };
+      return { confidence: 0, validNow: false };
     }
     const wrist = hl[0][0];
-    if (!wrist) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    if (!wrist) return { confidence: 0, validNow: false };
 
     const prevX = waveDirRef.current.lastX;
     let changes = waveDirRef.current.changes;
     if (prevX !== null) {
       const dx = wrist.x - prevX;
-      const dir = dx > 0 ? 'R' : dx < 0 ? 'L' : waveDirRef.current.lastDir;
-      if (dir && waveDirRef.current.lastDir && dir !== waveDirRef.current.lastDir && Math.abs(dx) > 0.02) {
+      // More sensitive oscillation detection
+      const dir = dx > 0.003 ? 'R' : dx < -0.003 ? 'L' : waveDirRef.current.lastDir;
+      if (dir && waveDirRef.current.lastDir && dir !== waveDirRef.current.lastDir) {
         changes += 1;
       }
       waveDirRef.current = { lastX: wrist.x, lastDir: dir, changes };
@@ -357,9 +384,8 @@ const ImitationGame = ({ studentId, onComplete }) => {
       waveDirRef.current = { lastX: wrist.x, lastDir: null, changes };
     }
 
-    const ok = changes >= 3;
-    const conf = ok ? 0.85 : Math.min(0.7, changes * 0.2);
-    return { confidence: conf, validNow: Math.abs((wrist.x || 0) - (prevX || wrist.x)) > 0.01, biomechanicsOK: ok };
+    const conf = changes >= 2 ? 0.9 : changes >= 1 ? 0.6 : 0.3;
+    return { confidence: conf, validNow: true };
   };
 
   // 3) Smile – elevation above baseline
@@ -367,69 +393,100 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const shapes = face?.faceBlendshapes?.[0]?.categories || [];
     const left = shapes.find(c => c.categoryName === 'mouthSmileLeft');
     const right = shapes.find(c => c.categoryName === 'mouthSmileRight');
-    if (!left || !right) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    const dLeft = shapes.find(c => c.categoryName === 'mouthDimpleLeft');
+    const dRight = shapes.find(c => c.categoryName === 'mouthDimpleRight');
+    
+    if (!left || !right) return { confidence: 0, validNow: false };
 
-    const smile = ((left.score || 0) + (right.score || 0)) / 2 * 100;
-    if (neutralSmileBaselineRef.current == null) {
-      neutralSmileBaselineRef.current = smile; // baseline during early frames
-    }
-    const elevation = smile - (neutralSmileBaselineRef.current || 0);
-    const ok = elevation >= 20;
-    const conf = Math.min(1, smile / 100);
-    return { confidence: conf, validNow: conf >= CONFIDENCE_MIN, biomechanicsOK: ok };
+    // Combine smile and dimple scores for more robust detection
+    const smile = ((left.score || 0) + (right.score || 0)) / 2;
+    const dimple = ((dLeft?.score || 0) + (dRight?.score || 0)) / 2;
+    const combined = Math.max(smile, (smile + dimple) / 1.5);
+
+    // Significantly lower thresholds for ASD screening
+    const conf = combined > 0.2 ? 0.9 : combined > 0.08 ? 0.5 : 0;
+    return { confidence: conf, validNow: combined > 0.05 };
   };
 
-  // 4) Raise Hands – wrists above shoulders sustained
+  // 4) Raise Hands – wrists above shoulders or near ears
   const detectHandsUp = (pose) => {
     const lms = pose?.landmarks?.[0];
-    if (!lms) { handsRaisedRef.current.start = null; return { confidence: 0, validNow: false, biomechanicsOK: false }; }
+    if (!lms) return { confidence: 0, validNow: false };
     const leftWrist = lms[15], rightWrist = lms[16], leftShoulder = lms[11], rightShoulder = lms[12];
-    if (!leftWrist || !rightWrist || !leftShoulder || !rightShoulder) {
-      handsRaisedRef.current.start = null; return { confidence: 0, validNow: false, biomechanicsOK: false };
-    }
-    const leftRaised = leftWrist.y < leftShoulder.y;
-    const rightRaised = rightWrist.y < rightShoulder.y;
-    const both = leftRaised && rightRaised;
-    if (both) {
-      if (!handsRaisedRef.current.start) handsRaisedRef.current.start = Date.now();
-    } else {
-      handsRaisedRef.current.start = null;
-    }
-    const conf = both ? 0.9 : 0.0;
-    const ok = both; // time sustained enforced by SUSTAIN_MS_HANDS_UP in validator
-    return { confidence: conf, validNow: both, biomechanicsOK: ok };
+    const leftEar = lms[7], rightEar = lms[8];
+    
+    if (!leftWrist || !rightWrist) return { confidence: 0, validNow: false };
+
+    // Primary check: wrists above shoulders
+    // Secondary check: wrists above ears (useful if shoulders are out of frame)
+    const leftRaised = (leftShoulder && leftWrist.y < leftShoulder.y + 0.15) || (leftEar && leftWrist.y < leftEar.y + 0.2);
+    const rightRaised = (rightShoulder && rightWrist.y < rightShoulder.y + 0.15) || (rightEar && rightWrist.y < rightEar.y + 0.2);
+    
+    let conf = 0;
+    if (leftRaised && rightRaised) conf = 0.95;
+    else if (leftRaised || rightRaised) conf = 0.5;
+    
+    return { confidence: conf, validNow: leftRaised || rightRaised };
   };
 
   // 5) Point (left/right) – index extended, direction
   const detectPoint = (hands, dir) => {
     const hl = getHands(hands);
     if (hl.length < 1) return { confidence: 0, validNow: false, biomechanicsOK: false };
-    // choose the most lateral hand as pointing candidate
-    const h0 = hl[0];
-    const wrist = h0[0];
-    const indexTip = h0[8]; // index fingertip
-    const indexMCP = h0[5];
-    if (!wrist || !indexTip || !indexMCP) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    
+    // Check all visible hands
+    let bestConf = 0;
+    let anyValid = false;
 
-    const indexExtended = Math.hypot(indexTip.x - indexMCP.x, indexTip.y - indexMCP.y) > 0.08;
-    const pointingLeft = (indexTip.x - wrist.x) < -0.06;
-    const pointingRight = (indexTip.x - wrist.x) > 0.06;
-    const matchesDir = dir === 'left' ? pointingLeft : pointingRight;
+    hl.forEach(h => {
+      const wrist = h[0];
+      const indexTip = h[8];
+      const indexMCP = h[5];
+      const middleTip = h[12];
+      const ringTip = h[16];
+      const pinkyTip = h[20];
+      
+      if (!wrist || !indexTip || !indexMCP) return;
 
-    const conf = indexExtended && matchesDir ? 0.9 : 0.0;
-    return { confidence: conf, validNow: indexExtended && matchesDir, biomechanicsOK: indexExtended && matchesDir };
+      const indexExtended = Math.hypot(indexTip.x - indexMCP.x, indexTip.y - indexMCP.y) > 0.05;
+      
+      // Check if other fingers are relatively curled compared to index
+      const othersCurled = [middleTip, ringTip, pinkyTip].every(f => 
+        !f || Math.hypot(f.x - wrist.x, f.y - wrist.y) < 0.25
+      );
+
+      const pointingLeft = (indexTip.x - wrist.x) < -0.04;
+      const pointingRight = (indexTip.x - wrist.x) > 0.04;
+      const matchesDir = dir === 'left' ? pointingLeft : pointingRight;
+
+      let conf = 0;
+      if (indexExtended && matchesDir) {
+        conf = othersCurled ? 0.95 : 0.7;
+      } else if (matchesDir) {
+        conf = 0.4; // Pointing in direction but index not fully extended
+      }
+
+      if (conf > bestConf) bestConf = conf;
+      if (indexExtended && matchesDir) anyValid = true;
+    });
+
+    return { confidence: bestConf, validNow: anyValid, biomechanicsOK: anyValid };
   };
 
   // 6) Finger on Lips – index tip near mouth center
   const detectFingerOnLips = (hands, face) => {
     const hl = getHands(hands);
-    const shapes = face?.faceBlendshapes?.[0]?.categories || [];
-    // approximate mouth center using smile categories as proxy if landmarks not available
-    // Fallback: use presence of face and assume center at normalized (0.5, 0.5) adjustments.
+    const landmarks = face?.faceLandmarks?.[0];
+    
     let mouthX = 0.5, mouthY = 0.5;
-    const mouthOpen = shapes.find(c => c.categoryName === 'mouthOpen');
-    if (mouthOpen) {
-      // Not exact position; rely on distance threshold + confidence gate
+    if (landmarks) {
+      // Use landmarks 13 (upper lip) and 14 (lower lip) for center
+      const upperLip = landmarks[13];
+      const lowerLip = landmarks[14];
+      if (upperLip && lowerLip) {
+        mouthX = (upperLip.x + lowerLip.x) / 2;
+        mouthY = (upperLip.y + lowerLip.y) / 2;
+      }
     }
 
     if (hl.length < 1) return { confidence: 0, validNow: false, biomechanicsOK: false };
@@ -438,8 +495,8 @@ const ImitationGame = ({ studentId, onComplete }) => {
     if (!indexTip) return { confidence: 0, validNow: false, biomechanicsOK: false };
 
     const dist = Math.hypot((indexTip.x - mouthX), (indexTip.y - mouthY));
-    const near = dist < 0.12; // conservative
-    const conf = near ? 0.85 : 0.0;
+    const near = dist < 0.15; // Further relaxed for ASD screening
+    const conf = near ? 0.95 : dist < 0.25 ? 0.6 : 0.0;
     return { confidence: conf, validNow: near, biomechanicsOK: near };
   };
 
@@ -447,23 +504,39 @@ const ImitationGame = ({ studentId, onComplete }) => {
   const detectThumbsUp = (hands) => {
     const hl = getHands(hands);
     if (hl.length < 1) return { confidence: 0, validNow: false, biomechanicsOK: false };
-    const h0 = hl[0];
-    const wrist = h0[0];
-    const thumbTip = h0[4];
-    const thumbMCP = h0[2];
-    const indexTip = h0[8];
-    const middleTip = h0[12];
-    const ringTip = h0[16];
-    const pinkyTip = h0[20];
-    if (!wrist || !thumbTip || !thumbMCP || !indexTip || !middleTip || !ringTip || !pinkyTip) {
-      return { confidence: 0, validNow: false, biomechanicsOK: false };
-    }
-    const thumbExtended = Math.hypot(thumbTip.x - thumbMCP.x, thumbTip.y - thumbMCP.y) > 0.08;
-    const othersCurled = [indexTip, middleTip, ringTip, pinkyTip].every(f => Math.hypot(f.x - wrist.x, f.y - wrist.y) < 0.25);
-    const upward = (thumbTip.y - wrist.y) < -0.05; // up in normalized coords (smaller y is higher)
-    const ok = thumbExtended && othersCurled && upward;
-    const conf = ok ? 0.9 : 0.0;
-    return { confidence: conf, validNow: ok, biomechanicsOK: ok };
+    
+    let bestConf = 0;
+    let anyValid = false;
+
+    hl.forEach(h => {
+      const wrist = h[0];
+      const thumbTip = h[4];
+      const thumbMCP = h[2];
+      const indexTip = h[8];
+      const middleTip = h[12];
+      const ringTip = h[16];
+      const pinkyTip = h[20];
+      
+      if (!wrist || !thumbTip || !thumbMCP || !indexTip || !middleTip || !ringTip || !pinkyTip) return;
+
+      const thumbExtended = Math.hypot(thumbTip.x - thumbMCP.x, thumbTip.y - thumbMCP.y) > 0.05;
+      const othersCurled = [indexTip, middleTip, ringTip, pinkyTip].every(f => 
+        Math.hypot(f.x - wrist.x, f.y - wrist.y) < 0.3
+      );
+      const upward = (thumbTip.y - wrist.y) < -0.03;
+
+      let conf = 0;
+      if (thumbExtended && upward) {
+        conf = othersCurled ? 0.95 : 0.7;
+      } else if (thumbExtended || upward) {
+        conf = 0.4;
+      }
+
+      if (conf > bestConf) bestConf = conf;
+      if (thumbExtended && upward) anyValid = true;
+    });
+
+    return { confidence: bestConf, validNow: anyValid, biomechanicsOK: anyValid };
   };
 
   // 8) Prayer – palms/wrists close
@@ -473,9 +546,23 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const l = hl[0][0];
     const r = hl[1][0];
     if (!l || !r) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    
     const dist = Math.hypot(l.x - r.x, l.y - r.y);
-    const touching = dist < 0.12;
-    const conf = touching ? 0.9 : 0.0;
+    const touching = dist < 0.18;
+    const near = dist < 0.35;
+    
+    // Check if hands are roughly vertical (wrists below fingertips)
+    const lTip = hl[0][12]; // middle fingertip
+    const rTip = hl[1][12];
+    const vertical = lTip && rTip && lTip.y < l.y && rTip.y < r.y;
+
+    let conf = 0;
+    if (touching) {
+        conf = vertical ? 0.95 : 0.8;
+    } else if (near) {
+        conf = 0.5;
+    }
+
     return { confidence: conf, validNow: touching, biomechanicsOK: touching };
   };
 
@@ -492,11 +579,23 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
     const payload = {
       studentId,
+      assessmentType: 'imitation',
       game: 'Imitation',
+      score: imitationAccuracy,
       totalActions,
-      successfulActions,
+      correctImitations: successfulActions,
       imitationAccuracy,
-      actionResults
+      averageReactionTime: Math.round(avgRt),
+      metrics: {
+        accuracy: imitationAccuracy,
+        responseTime: Math.round(avgRt),
+        totalActions,
+        correctImitations: successfulActions,
+        imitationAccuracy,
+        averageReactionTime: Math.round(avgRt),
+        meanSimilarityScore: Number((actionResults.reduce((s, r) => s + (r.confidenceScore || 0), 0) / (actionResults.length || 1)).toFixed(2))
+      },
+      rawGameData: actionResults
     };
 
     // Send to parent/backend

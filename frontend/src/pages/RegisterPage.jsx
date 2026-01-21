@@ -174,7 +174,14 @@ export default function RegisterPage() {
   const handleGoogleSuccess = async (credentialResponse) => {
     try {
       const token = credentialResponse.credential;
-      const res = await axios.post('http://localhost:5000/api/auth/google', { token });
+      const selectedRole = role;
+      const res = await axios.post('http://localhost:5000/api/auth/google', { token, expectedRole: selectedRole });
+      const backendRole = res.data.user?.role ? String(res.data.user.role).toLowerCase() : '';
+
+      if (!res.data.isNewUser && backendRole && backendRole !== selectedRole) {
+        setMessage(`This Google account is registered as ${res.data.user.role}. Please choose ${res.data.user.role} to sign in.`);
+        return;
+      }
       
       if (res.data.isNewUser) {
         localStorage.clear();

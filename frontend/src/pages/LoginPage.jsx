@@ -110,7 +110,8 @@ export default function LoginPage() {
       sessionStorage.clear();
       
       const token = credentialResponse.credential;
-      const res = await axios.post('http://localhost:5000/api/auth/google', { token });
+      const selectedRole = role;
+      const res = await axios.post('http://localhost:5000/api/auth/google', { token, expectedRole: selectedRole });
       
       console.log('🔍 Google Auth Response:', {
         isNewUser: res.data.isNewUser,
@@ -121,6 +122,12 @@ export default function LoginPage() {
         hasResearcherId: !!res.data.user?.researcherId,
         hasAdminId: !!res.data.user?.adminId
       });
+
+      const backendRole = res.data.user?.role ? String(res.data.user.role).toLowerCase() : '';
+      if (!res.data.isNewUser && backendRole && backendRole !== selectedRole) {
+        setMessage(`This Google account is registered as ${res.data.user.role}. Please choose ${res.data.user.role} to sign in.`);
+        return;
+      }
       
       if (res.data.user) {
         const roleIdField = {

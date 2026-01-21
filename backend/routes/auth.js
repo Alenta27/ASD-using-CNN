@@ -125,131 +125,143 @@ router.post('/api/register', uploadCredentials.single('doctoraldegree'), async (
 
 // ---------------- Google Authentication Route (Updated) ----------------
 router.post('/api/auth/google', async (req, res) => {
-    const { token } = req.body;
-    console.log('=== Google Auth Request ===');
-    console.log('Received Google token:', token ? 'Token received' : 'No token');
-    console.log('Token length:', token ? token.length : 0);
-    console.log('Google Client ID being used:', googleClientId);
+  const { token, expectedRole } = req.body;
+  console.log('=== Google Auth Request ===');
+  console.log('Received Google token:', token ? 'Token received' : 'No token');
+  console.log('Token length:', token ? token.length : 0);
+  console.log('Google Client ID being used:', googleClientId);
+  const validRoles = ['parent', 'therapist', 'teacher', 'researcher', 'admin'];
     
-    if (!token) {
-        return res.status(400).json({ message: "No token provided" });
+  if (!token) {
+    return res.status(400).json({ message: "No token provided" });
+  }
+    
+  try {
+    // Verify Google token
+    console.log('Attempting to verify Google token...');
+    const ticket = await googleClient.verifyIdToken({
+      idToken: token,
+      audience: googleClientId
+    });
+    const payload = ticket.getPayload();
+    console.log('Token payload received for:', payload.email);
+        
+    // Verify audience from payload (robust check)
+    const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+    if (!aud.includes(googleClientId)) {
+      console.error('❌ AUDIENCE MISMATCH:');
+      console.error('Expected:', googleClientId);
+      console.error('Got:', payload.aud);
+      throw new Error(`Invalid audience: expected ${googleClientId}, got ${payload.aud}`);
     }
-    
+        
+    console.log('✅ Google token verified successfully for:', payload.email);
+    const { email, name } = payload;
+    const normalizedEmail = email.toLowerCase();
+
+    let user = null;
+    let isNewUser = false;
+        
     try {
-        // Verify Google token
-        console.log('Attempting to verify Google token...');
-        const ticket = await googleClient.verifyIdToken({
-            idToken: token,
-            audience: googleClientId
-        });
-        const payload = ticket.getPayload();
-        console.log('Token payload received for:', payload.email);
-        
-        // Verify audience from payload (robust check)
-        const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-        if (!aud.includes(googleClientId)) {
-            console.error('❌ AUDIENCE MISMATCH:');
-            console.error('Expected:', googleClientId);
-            console.error('Got:', payload.aud);
-            throw new Error(`Invalid audience: expected ${googleClientId}, got ${payload.aud}`);
-        }
-        
-        console.log('✅ Google token verified successfully for:', payload.email);
-        const { email, name } = payload;
-        const normalizedEmail = email.toLowerCase();
-
-        let user = null;
-        let isNewUser = false;
-        
-        try {
-            // Find user by email (case-insensitive)
-            user = await User.findOne({ email: normalizedEmail }).maxTimeMS(5000);
+      // Find user by email (case-insensitive)
+      user = await User.findOne({ email: normalizedEmail }).maxTimeMS(5000);
             
-            if (!user) {
-                // Fallback: try case-insensitive search for existing users
-                user = await User.findOne({ email: { $regex: `^${normalizedEmail}$`, $options: 'i' } }).maxTimeMS(5000);
-            }
-            if (user) {
-                console.log(`✅ Found existing user: ${user.email}, Role: ${user.role}`);
-                // Check if user has a valid role, if not, treat as new user needing role selection
-                const validRoles = ['parent', 'therapist', 'teacher', 'researcher', 'admin'];
-                if (!user.role || !validRoles.includes(user.role)) {
-                    console.log(`⚠️ User ${user.email} has invalid/undefined role (${user.role}), treating as new user`);
-                    isNewUser = true;
-                } else {
-                    console.log(`✅ User has valid role: ${user.role}, isNewUser: false`);
-                    isNewUser = false;
-                }
-            }
-            if (user && user.email !== normalizedEmail) {
-                user.email = normalizedEmail;
-                await user.save();
-            }
-            if (!user) {
-                isNewUser = true;
-                console.log(`⚠️ User not found in DB, creating new guest user: ${normalizedEmail}`);
-                user = new User({
-                    username: name || normalizedEmail,
-                    email: normalizedEmail,
-                    password: '',
-                    role: 'guest'
-                });
-                await user.save();
-                console.log(`✅ New guest user created: ${normalizedEmail}`);
-            }
-        } catch (dbErr) {
-            console.warn('⚠️ MongoDB unavailable, creating temporary user object:', dbErr.message);
-            // If DB is down, create a temporary user object for JWT generation
-            user = {
-                _id: `temp-${Date.now()}`,
-                email: normalizedEmail,
-                role: 'guest'
-            };
-            isNewUser = true;
+      if (!user) {
+        // Fallback: try case-insensitive search for existing users
+        user = await User.findOne({ email: { $regex: `^${normalizedEmail}$`, $options: 'i' } }).maxTimeMS(5000);
+      }
+      if (user) {
+        console.log(`✅ Found existing user: ${user.email}, Role: ${user.role}`);
+        // Check if user has a valid role, if not, treat as new user needing role selection
+        if (!user.role || !validRoles.includes(user.role)) {
+          console.log(`⚠️ User ${user.email} has invalid/undefined role (${user.role}), treating as new user`);
+          isNewUser = true;
+        } else {
+          console.log(`✅ User has valid role: ${user.role}, isNewUser: false`);
+          isNewUser = false;
         }
-
-        const jwtToken = jwt.sign(
-            { id: user._id, email: user.email, role: user.role },
-            process.env.JWT_SECRET || "your-super-secret-jwt-key-change-this-in-production",
-            { expiresIn: "1h" }
-        );
-        
-        console.log('✅ JWT token generated successfully');
-        res.json({ 
-            message: "Google login successful", 
-            token: jwtToken, 
-            isNewUser,
-            user: {
-                id: user._id,
-                email: user.email,
-                role: user.role,
-                parentId: user.parentId,
-                therapistId: user.therapistId,
-                teacherId: user.teacherId,
-                researcherId: user.researcherId,
-                adminId: user.adminId
-            }
+      }
+      if (user && user.email !== normalizedEmail) {
+        user.email = normalizedEmail;
+        await user.save();
+      }
+      if (!user) {
+        isNewUser = true;
+        console.log(`⚠️ User not found in DB, creating new guest user: ${normalizedEmail}`);
+        user = new User({
+          username: name || normalizedEmail,
+          email: normalizedEmail,
+          password: '',
+          role: 'guest'
         });
-
-    } catch (err) {
-        console.error('❌ Google token verification failed:');
-        console.error('Error message:', err.message);
-        console.error('Error code:', err.code);
-        console.error('Full error:', err);
-        
-        // Additional diagnostics
-        if (err.message.includes('audience')) {
-            console.error('⚠️ AUDIENCE MISMATCH - Token from different Client ID');
-            console.error('Expected audience:', googleClientId);
-        }
-        
-        res.status(401).json({ 
-            message: "Invalid Google token", 
-            error: err.message,
-            clientId: process.env.GOOGLE_CLIENT_ID || 'NOT SET',
-            hint: 'Ensure frontend and backend use the same Google Client ID'
-        });
+        await user.save();
+        console.log(`✅ New guest user created: ${normalizedEmail}`);
+      }
+    } catch (dbErr) {
+      console.warn('⚠️ MongoDB unavailable, creating temporary user object:', dbErr.message);
+      // If DB is down, create a temporary user object for JWT generation
+      user = {
+        _id: `temp-${Date.now()}`,
+        email: normalizedEmail,
+        role: 'guest'
+      };
+      isNewUser = true;
     }
+
+    // Enforce role consistency when the frontend supplied an expected role
+    const requestedRole = expectedRole ? String(expectedRole).toLowerCase() : null;
+    const actualRole = user?.role ? String(user.role).toLowerCase() : null;
+    if (!isNewUser && requestedRole && validRoles.includes(actualRole) && requestedRole !== actualRole) {
+      console.warn(`❌ Google role mismatch for ${normalizedEmail}: requested ${requestedRole}, account role ${actualRole}`);
+      return res.status(403).json({
+        message: `This Google account is registered as ${user.role}. Please sign in using the ${user.role} role.`,
+        expectedRole: requestedRole,
+        actualRole
+      });
+    }
+
+    const jwtToken = jwt.sign(
+      { id: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET || "your-super-secret-jwt-key-change-this-in-production",
+      { expiresIn: "1h" }
+    );
+        
+    console.log('✅ JWT token generated successfully');
+    res.json({ 
+      message: "Google login successful", 
+      token: jwtToken, 
+      isNewUser,
+      user: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        parentId: user.parentId,
+        therapistId: user.therapistId,
+        teacherId: user.teacherId,
+        researcherId: user.researcherId,
+        adminId: user.adminId
+      }
+    });
+
+  } catch (err) {
+    console.error('❌ Google token verification failed:');
+    console.error('Error message:', err.message);
+    console.error('Error code:', err.code);
+    console.error('Full error:', err);
+        
+    // Additional diagnostics
+    if (err.message.includes('audience')) {
+      console.error('⚠️ AUDIENCE MISMATCH - Token from different Client ID');
+      console.error('Expected audience:', googleClientId);
+    }
+        
+    res.status(401).json({ 
+      message: "Invalid Google token", 
+      error: err.message,
+      clientId: process.env.GOOGLE_CLIENT_ID || 'NOT SET',
+      hint: 'Ensure frontend and backend use the same Google Client ID'
+    });
+  }
 });
 
 router.post('/api/auth/forget-password', async (req, res) => {
