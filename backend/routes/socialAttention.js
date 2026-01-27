@@ -28,16 +28,19 @@ router.post('/start', verifyToken, async (req, res) => {
     const protocol = req.protocol;
     const baseUrl = `${protocol}://${host}`;
     
-    const localSocialVideo = path.join(__dirname, '../public/videos/social_face.mp4');
-    const localPatternVideo = path.join(__dirname, '../public/videos/abstract_patterns.mp4');
+    const localSocialPath = path.join(__dirname, '../public/videos/social_face.mp4');
+    const localPatternPath = path.join(__dirname, '../public/videos/abstract_patterns.mp4');
     
-    const leftVideo = fs.existsSync(localSocialVideo)
-      ? `${baseUrl}/videos/social_face.mp4`
-      : "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4";
-      
-    const rightVideo = fs.existsSync(localPatternVideo)
-      ? `${baseUrl}/videos/abstract_patterns.mp4`
-      : "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+    // Stable, high-quality Pexels fallback URLs
+    let leftVideo = "https://videos.pexels.com/video-files/4440954/4440954-sd_640_360_25fps.mp4";
+    let rightVideo = "https://videos.pexels.com/video-files/3129957/3129957-sd_640_360_25fps.mp4";
+
+    if (fs.existsSync(localSocialPath) && fs.statSync(localSocialPath).size > 1000) {
+      leftVideo = `${baseUrl}/videos/social_face.mp4`;
+    }
+    if (fs.existsSync(localPatternPath) && fs.statSync(localPatternPath).size > 1000) {
+      rightVideo = `${baseUrl}/videos/abstract_patterns.mp4`;
+    }
 
     if (dryRun) {
       return res.status(200).json({ leftVideo, rightVideo });
@@ -246,6 +249,53 @@ router.post('/end', verifyToken, async (req, res) => {
     // Redirect to finish
     req.url = '/finish';
     return router.handle(req, res);
+});
+
+/**
+ * @route POST /api/social-attention/therapist/save
+ * @desc Store direct scoring result from therapist dashboard
+ */
+router.post('/therapist/save', verifyToken, async (req, res) => {
+  try {
+    const { 
+      patientId, 
+      socialPreferenceScore, 
+      socialTime, 
+      nonSocialTime, 
+      totalTime, 
+      confidence,
+      timestamp 
+    } = req.body;
+
+    if (!patientId) {
+      return res.status(400).json({ error: 'patientId is required' });
+    }
+
+    const sessionId = `direct-${crypto.randomUUID()}`;
+
+    // Map to the common session model
+    const newSession = new SocialAttentionSession({
+      sessionId,
+      studentId: patientId,
+      teacherId: req.user.id,
+      startTime: timestamp || new Date(),
+      endTime: new Date(),
+      status: 'COMPLETED',
+      leftLookTime: socialTime * 1000, // store in ms
+      rightLookTime: nonSocialTime * 1000,
+      socialPreferenceScore,
+      socialAttentionScore: socialPreferenceScore,
+      confidenceScore: confidence,
+      totalTrackedTime: totalTime,
+      source: 'therapist_direct_score'
+    });
+
+    await newSession.save();
+    res.status(200).json({ success: true, sessionId });
+  } catch (error) {
+    console.error('Error saving direct score:', error);
+    res.status(500).json({ error: 'Failed to save assessment results' });
+  }
 });
 
 module.exports = router;

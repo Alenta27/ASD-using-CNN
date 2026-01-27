@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { FiArrowLeft, FiCalendar, FiActivity, FiFileText, FiEye, FiAlertCircle, FiHome, FiUsers, FiSettings, FiLogOut } from 'react-icons/fi';
+import { FiArrowLeft, FiCalendar, FiActivity, FiFileText, FiEye, FiAlertCircle, FiHome, FiUsers, FiSettings, FiLogOut, FiBarChart2 } from 'react-icons/fi';
 import '../styles/TherapistAppointments.css';
+import SocialAttentionTracker from '../components/SocialAttentionTracker';
 
 const TherapistPatientProfilePage = () => {
   const navigate = useNavigate();
@@ -10,6 +11,7 @@ const TherapistPatientProfilePage = () => {
   const [screeningHistory, setScreeningHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showTracker, setShowTracker] = useState(false);
 
   const handleNavClick = (path) => {
     navigate(path);
@@ -331,6 +333,39 @@ const TherapistPatientProfilePage = () => {
               >
                 <FiCalendar size={18} />
                 Schedule Appointment
+              </button>
+              <button 
+                onClick={() => setShowTracker(true)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  padding: '12px 24px',
+                  backgroundColor: '#6366f1',
+                  color: 'white',
+                  border: '2px solid #6366f1',
+                  borderRadius: '10px',
+                  fontSize: '15px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  height: '48px'
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.backgroundColor = '#4f46e5';
+                  e.currentTarget.style.borderColor = '#4f46e5';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(99, 102, 241, 0.3)';
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.backgroundColor = '#6366f1';
+                  e.currentTarget.style.borderColor = '#6366f1';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = 'none';
+                }}
+              >
+                <FiBarChart2 size={18} />
+                Real-time Social Scoring
               </button>
               <button 
                 onClick={() => navigate(`/live-gaze-analysis?patientId=${patient._id}`)}
@@ -874,6 +909,17 @@ const TherapistPatientProfilePage = () => {
           )}
         </div>
       </div>
+
+      {showTracker && (
+        <SocialAttentionTracker 
+          patientId={patient._id} 
+          onClose={() => setShowTracker(false)} 
+          onComplete={(results) => {
+            console.log("Assessment complete:", results);
+            // Optionally refresh screening history
+          }}
+        />
+      )}
     </div>
   );
 };

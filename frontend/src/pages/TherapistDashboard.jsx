@@ -16,6 +16,7 @@ const Sidebar = ({ activeNav, onNavClick, onLogout, therapistName }) => {
     { id: 'slots', label: 'Manage Slots', icon: FiCalendar, path: '/therapist/slots' },
     { id: 'screening', label: 'Screening Results', icon: FiFileText, path: '/therapist/questionnaires' },
     { id: 'gaze', label: 'Live Gaze Analysis', icon: FiUsers, path: '/therapist/gaze-sessions' },
+    { id: 'speech-therapy', label: 'Speech Therapy', icon: FiUsers, path: '/therapist/speech-therapy' },
   ];
 
   return (

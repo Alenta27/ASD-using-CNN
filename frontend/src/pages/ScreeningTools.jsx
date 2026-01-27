@@ -38,6 +38,16 @@ export default function ScreeningTools() {
               Real-time monitoring of patient attention and gaze patterns.
             </p>
           </Link>
+
+          <Link to="/speech-therapy" className="block bg-white rounded-lg shadow p-6 hover:shadow-md transition">
+            <div className="flex items-center gap-3 text-green-700">
+              <FaClipboardList className="text-2xl" />
+              <h2 className="text-xl font-semibold">Speech Therapy</h2>
+            </div>
+            <p className="text-gray-600 mt-2 text-sm">
+              Practice communication skills with guided feedback and progress tracking.
+            </p>
+          </Link>
         </div>
       </div>
     </div>

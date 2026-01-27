@@ -17,10 +17,10 @@ const ACTIONS = [
 ];
 
 // Thresholds
-const SUSTAIN_FRAMES = 8; // Stable detection for 8 frames (~250-300ms)
-const CONFIDENCE_CORRECT = 0.55; // Further relaxed from 0.65
-const CONFIDENCE_PARTIAL = 0.3;  // Further relaxed from 0.4
-const FALLBACK_THRESHOLD = 0.2; // Even lower for "Review/Demo" safe fallback
+const SUSTAIN_FRAMES = 15; // Increased for ~1 second of data (assuming 15-20fps)
+const CONFIDENCE_CORRECT = 0.75; 
+const CONFIDENCE_PARTIAL = 0.4;  
+const WINDOW_SIZE = 30; // ~1.5 - 2 seconds temporal window
 
 const ImitationGame = ({ studentId, onComplete }) => {
   // State machine: idle → camera_ready → demo_action → imitate → validating → feedback → next_action → final_results
@@ -216,42 +216,38 @@ const ImitationGame = ({ studentId, onComplete }) => {
         const action = ACTIONS[currentIndex];
         const det = detectAction(action.id, pose, hands, face);
         
-        // Debug logging for developers to see why it fails
-        if (timestamp % 20 === 0) { // log every ~20th frame to avoid flood
-            console.log(`Action: ${action.id}, Confidence: ${det.confidence}, Valid: ${det.validNow}`);
-            if (action.id === 'smile' && face?.faceBlendshapes?.[0]) {
-                const s = face.faceBlendshapes[0].categories;
-                const sl = s.find(c => c.categoryName === 'mouthSmileLeft')?.score;
-                const sr = s.find(c => c.categoryName === 'mouthSmileRight')?.score;
-                console.log(`Raw Smile Scores - Left: ${sl}, Right: ${sr}`);
-            }
+        const conf = Math.max(0, Math.min(1, det.confidence || 0));
+        
+        // Accumulate in temporal window
+        historyRef.current.push(conf);
+        if (historyRef.current.length > WINDOW_SIZE) {
+          historyRef.current.shift();
         }
 
-        const conf = Math.max(0, Math.min(1, det.confidence || 0));
-        setConfidencePct(Math.round(conf * 100));
+        // Calculate average confidence over the last 1 second (roughly SUSTAIN_FRAMES)
+        const recentHistory = historyRef.current.slice(-SUSTAIN_FRAMES);
+        const avgConf = recentHistory.length > 0 
+          ? recentHistory.reduce((a, b) => a + b, 0) / recentHistory.length 
+          : 0;
+
+        setConfidencePct(Math.round(avgConf * 100));
 
         // State & Frame Validation
-        if (conf >= CONFIDENCE_CORRECT) {
-          frameCounterRef.current.correct += 1;
+        if (avgConf >= CONFIDENCE_CORRECT) {
           setDetectionState('correct');
-          setFeedbackText('Looking good! Keep going...');
-        } else if (conf >= CONFIDENCE_PARTIAL || (conf >= FALLBACK_THRESHOLD && det.validNow)) {
-          frameCounterRef.current.partial += 1;
+          setFeedbackText('Detected ✅');
+          
+          // If we have enough frames and high confidence, we can conclude early
+          if (recentHistory.length >= SUSTAIN_FRAMES) {
+            concludeAction('correct', avgConf);
+            return;
+          }
+        } else if (avgConf >= CONFIDENCE_PARTIAL) {
           setDetectionState('partial');
-          setFeedbackText('Close! Try a bit more...');
+          setFeedbackText('Partially Detected ⚠️');
         } else {
-          // Slowly decay frame counters if lost
-          frameCounterRef.current.correct = Math.max(0, frameCounterRef.current.correct - 0.5);
-          frameCounterRef.current.partial = Math.max(0, frameCounterRef.current.partial - 0.5);
           setDetectionState('none');
-          setFeedbackText('Detecting gesture…');
-        }
-
-        // Logic for concluding: 
-        // If we hit SUSTAIN_FRAMES for correct -> Instant success
-        if (frameCounterRef.current.correct >= SUSTAIN_FRAMES) {
-          concludeAction('correct', conf);
-          return;
+          setFeedbackText('Not Detected ❌');
         }
       } catch (e) {
         console.error('Frame process error', e);
@@ -265,12 +261,20 @@ const ImitationGame = ({ studentId, onComplete }) => {
   const concludeAction = (status, finalConf) => {
     setPhase('feedback');
     
-    // Status can be 'correct', 'partial', or 'fail' (if time runs out)
+    // If status is 'fail' (timeout), we calculate the best average confidence we had
     let displayStatus = status;
+    let actualConf = finalConf;
+
     if (status === 'fail') {
-        // Final fallback check: if they had some partial success but timed out, 
-        // or if they had ANY sustained partial frames, give them 'partial'
-        if (frameCounterRef.current.partial >= SUSTAIN_FRAMES || frameCounterRef.current.correct >= 3) {
+        const recentHistory = historyRef.current.slice(-SUSTAIN_FRAMES);
+        const avgConf = recentHistory.length > 0 
+          ? recentHistory.reduce((a, b) => a + b, 0) / recentHistory.length 
+          : 0;
+        
+        actualConf = avgConf;
+        if (avgConf >= CONFIDENCE_CORRECT) {
+            displayStatus = 'correct';
+        } else if (avgConf >= CONFIDENCE_PARTIAL) {
             displayStatus = 'partial';
         } else {
             displayStatus = 'incorrect';
@@ -278,17 +282,17 @@ const ImitationGame = ({ studentId, onComplete }) => {
     }
 
     setFeedbackText(
-        displayStatus === 'correct' ? 'Great job! ✅' : 
-        displayStatus === 'partial' ? 'Almost there! 🟡' : 'Not detected ❌'
+        displayStatus === 'correct' ? 'Detected ✅' : 
+        displayStatus === 'partial' ? 'Partially Detected ⚠️' : 'Not Detected ❌'
     );
     setDetectionState(displayStatus === 'correct' ? 'correct' : displayStatus === 'partial' ? 'partial' : 'none');
 
     const action = ACTIONS[currentIndex];
     const result = {
       actionName: action.name,
-      status: displayStatus, // 'correct', 'partial', 'incorrect'
+      status: displayStatus, 
       success: displayStatus === 'correct' || displayStatus === 'partial',
-      confidenceScore: Number((finalConf || 0).toFixed(2)),
+      confidenceScore: Number((actualConf || 0).toFixed(2)),
       reactionTimeMs: actionStartTime ? Date.now() - actionStartTime : 0
     };
     setActionResults(prev => [...prev, result]);
@@ -335,57 +339,57 @@ const ImitationGame = ({ studentId, onComplete }) => {
   // 1) Clap – distance reduction cycles and contact
   const detectClap = (hands) => {
     const hl = getHands(hands);
-    if (hl.length < 2) {
-      clapCycleRef.current.lastDist = null;
-      return { confidence: 0, validNow: false };
-    }
-    const l = hl[0][0]; // left wrist approx
+    if (hl.length < 2) return { confidence: 0 };
+    
+    const l = hl[0][0]; // left wrist
     const r = hl[1][0];
-    if (!l || !r) return { confidence: 0, validNow: false };
+    if (!l || !r) return { confidence: 0 };
+
+    // Use relative distance based on hand size (distance between wrist and middle MCP)
+    const lHandSize = Math.hypot(hl[0][0].x - hl[0][9].x, hl[0][0].y - hl[0][9].y);
+    const rHandSize = Math.hypot(hl[1][0].x - hl[1][9].x, hl[1][0].y - hl[1][9].y);
+    const avgHandSize = (lHandSize + rHandSize) / 2;
 
     const dist = Math.hypot(l.x - r.x, l.y - r.y);
-    let cycles = clapCycleRef.current.cycles;
-    let lastDist = clapCycleRef.current.lastDist;
+    const relativeDist = dist / (avgHandSize || 0.1);
 
-    if (lastDist !== null) {
-      // More lenient contact threshold
-      if (dist < 0.25) {
-        if (lastDist > dist + 0.015) cycles += 0.5;
-      }
-    }
-    clapCycleRef.current = { lastDist: dist, cycles };
-
-    // Relaxed confidence levels
-    const conf = dist < 0.22 ? 0.9 : dist < 0.35 ? 0.5 : 0;
-    return { confidence: conf, validNow: dist < 0.4 };
+    // Clapping is hands coming close together
+    let conf = 0;
+    if (relativeDist < 1.5) conf = 0.95;
+    else if (relativeDist < 3.0) conf = 0.5;
+    
+    return { confidence: conf };
   };
 
-  // 2) Wave – left-right oscillations
+  // 2) Wave – oscillation of the hand
   const detectWave = (hands) => {
     const hl = getHands(hands);
-    if (hl.length < 1) {
-      waveDirRef.current = { lastX: null, lastDir: null, changes: 0 };
-      return { confidence: 0, validNow: false };
-    }
+    if (hl.length < 1) return { confidence: 0 };
+    
     const wrist = hl[0][0];
-    if (!wrist) return { confidence: 0, validNow: false };
+    const indexMCP = hl[0][5];
+    if (!wrist || !indexMCP) return { confidence: 0 };
 
+    const handSize = Math.hypot(wrist.x - indexMCP.x, wrist.y - indexMCP.y);
     const prevX = waveDirRef.current.lastX;
-    let changes = waveDirRef.current.changes;
+    
     if (prevX !== null) {
       const dx = wrist.x - prevX;
-      // More sensitive oscillation detection
-      const dir = dx > 0.003 ? 'R' : dx < -0.003 ? 'L' : waveDirRef.current.lastDir;
+      const relativeDx = dx / (handSize || 0.1);
+      
+      // Detection of movement direction change
+      const dir = relativeDx > 0.05 ? 'R' : relativeDx < -0.05 ? 'L' : waveDirRef.current.lastDir;
       if (dir && waveDirRef.current.lastDir && dir !== waveDirRef.current.lastDir) {
-        changes += 1;
+        waveDirRef.current.changes += 1;
       }
-      waveDirRef.current = { lastX: wrist.x, lastDir: dir, changes };
-    } else {
-      waveDirRef.current = { lastX: wrist.x, lastDir: null, changes };
+      waveDirRef.current.lastDir = dir;
     }
+    waveDirRef.current.lastX = wrist.x;
 
-    const conf = changes >= 2 ? 0.9 : changes >= 1 ? 0.6 : 0.3;
-    return { confidence: conf, validNow: true };
+    // A wave needs multiple direction changes
+    const changes = waveDirRef.current.changes;
+    const conf = changes >= 3 ? 0.95 : changes >= 1 ? 0.6 : 0.2;
+    return { confidence: conf };
   };
 
   // 3) Smile – elevation above baseline
@@ -393,84 +397,78 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const shapes = face?.faceBlendshapes?.[0]?.categories || [];
     const left = shapes.find(c => c.categoryName === 'mouthSmileLeft');
     const right = shapes.find(c => c.categoryName === 'mouthSmileRight');
-    const dLeft = shapes.find(c => c.categoryName === 'mouthDimpleLeft');
-    const dRight = shapes.find(c => c.categoryName === 'mouthDimpleRight');
     
-    if (!left || !right) return { confidence: 0, validNow: false };
+    if (!left || !right) return { confidence: 0 };
 
-    // Combine smile and dimple scores for more robust detection
-    const smile = ((left.score || 0) + (right.score || 0)) / 2;
-    const dimple = ((dLeft?.score || 0) + (dRight?.score || 0)) / 2;
-    const combined = Math.max(smile, (smile + dimple) / 1.5);
+    const smileScore = (left.score + right.score) / 2;
 
-    // Significantly lower thresholds for ASD screening
-    const conf = combined > 0.2 ? 0.9 : combined > 0.08 ? 0.5 : 0;
-    return { confidence: conf, validNow: combined > 0.05 };
+    let conf = 0;
+    if (smileScore > 0.4) conf = 0.95;
+    else if (smileScore > 0.15) conf = 0.6;
+    else if (smileScore > 0.05) conf = 0.3;
+    
+    return { confidence: conf };
   };
 
   // 4) Raise Hands – wrists above shoulders or near ears
   const detectHandsUp = (pose) => {
     const lms = pose?.landmarks?.[0];
-    if (!lms) return { confidence: 0, validNow: false };
+    if (!lms) return { confidence: 0 };
     const leftWrist = lms[15], rightWrist = lms[16], leftShoulder = lms[11], rightShoulder = lms[12];
     const leftEar = lms[7], rightEar = lms[8];
     
-    if (!leftWrist || !rightWrist) return { confidence: 0, validNow: false };
+    if (!leftWrist || !rightWrist) return { confidence: 0 };
 
-    // Primary check: wrists above shoulders
-    // Secondary check: wrists above ears (useful if shoulders are out of frame)
-    const leftRaised = (leftShoulder && leftWrist.y < leftShoulder.y + 0.15) || (leftEar && leftWrist.y < leftEar.y + 0.2);
-    const rightRaised = (rightShoulder && rightWrist.y < rightShoulder.y + 0.15) || (rightEar && rightWrist.y < rightEar.y + 0.2);
+    // Use relative height based on shoulder-to-shoulder distance if available
+    let shoulderDist = 0.2;
+    if (leftShoulder && rightShoulder) {
+        shoulderDist = Math.hypot(leftShoulder.x - rightShoulder.x, leftShoulder.y - rightShoulder.y);
+    }
+
+    // Wrists should be higher than shoulders (lower Y value)
+    const leftRaised = (leftShoulder && (leftShoulder.y - leftWrist.y) > shoulderDist * 0.2) || (leftEar && (leftEar.y - leftWrist.y) > -0.05);
+    const rightRaised = (rightShoulder && (rightShoulder.y - rightWrist.y) > shoulderDist * 0.2) || (rightEar && (rightEar.y - rightWrist.y) > -0.05);
     
     let conf = 0;
     if (leftRaised && rightRaised) conf = 0.95;
     else if (leftRaised || rightRaised) conf = 0.5;
     
-    return { confidence: conf, validNow: leftRaised || rightRaised };
+    return { confidence: conf };
   };
 
   // 5) Point (left/right) – index extended, direction
   const detectPoint = (hands, dir) => {
     const hl = getHands(hands);
-    if (hl.length < 1) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    if (hl.length < 1) return { confidence: 0 };
     
-    // Check all visible hands
     let bestConf = 0;
-    let anyValid = false;
 
     hl.forEach(h => {
       const wrist = h[0];
       const indexTip = h[8];
       const indexMCP = h[5];
-      const middleTip = h[12];
-      const ringTip = h[16];
-      const pinkyTip = h[20];
       
       if (!wrist || !indexTip || !indexMCP) return;
 
-      const indexExtended = Math.hypot(indexTip.x - indexMCP.x, indexTip.y - indexMCP.y) > 0.05;
+      const handSize = Math.hypot(wrist.x - indexMCP.x, wrist.y - indexMCP.y);
+      const indexLen = Math.hypot(indexTip.x - indexMCP.x, indexTip.y - indexMCP.y);
       
-      // Check if other fingers are relatively curled compared to index
-      const othersCurled = [middleTip, ringTip, pinkyTip].every(f => 
-        !f || Math.hypot(f.x - wrist.x, f.y - wrist.y) < 0.25
-      );
-
-      const pointingLeft = (indexTip.x - wrist.x) < -0.04;
-      const pointingRight = (indexTip.x - wrist.x) > 0.04;
+      const indexExtended = indexLen > handSize * 0.6;
+      
+      const dx = indexTip.x - wrist.x;
+      const pointingLeft = dx < -handSize * 0.5;
+      const pointingRight = dx > handSize * 0.5;
       const matchesDir = dir === 'left' ? pointingLeft : pointingRight;
 
       let conf = 0;
-      if (indexExtended && matchesDir) {
-        conf = othersCurled ? 0.95 : 0.7;
-      } else if (matchesDir) {
-        conf = 0.4; // Pointing in direction but index not fully extended
-      }
+      if (indexExtended && matchesDir) conf = 0.95;
+      else if (matchesDir) conf = 0.6;
+      else if (indexExtended) conf = 0.3;
 
       if (conf > bestConf) bestConf = conf;
-      if (indexExtended && matchesDir) anyValid = true;
     });
 
-    return { confidence: bestConf, validNow: anyValid, biomechanicsOK: anyValid };
+    return { confidence: bestConf };
   };
 
   // 6) Finger on Lips – index tip near mouth center
@@ -478,92 +476,80 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const hl = getHands(hands);
     const landmarks = face?.faceLandmarks?.[0];
     
-    let mouthX = 0.5, mouthY = 0.5;
-    if (landmarks) {
-      // Use landmarks 13 (upper lip) and 14 (lower lip) for center
-      const upperLip = landmarks[13];
-      const lowerLip = landmarks[14];
-      if (upperLip && lowerLip) {
-        mouthX = (upperLip.x + lowerLip.x) / 2;
-        mouthY = (upperLip.y + lowerLip.y) / 2;
-      }
-    }
+    if (!landmarks || hl.length < 1) return { confidence: 0 };
 
-    if (hl.length < 1) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    const upperLip = landmarks[13];
+    const lowerLip = landmarks[14];
+    const mouthX = (upperLip.x + lowerLip.x) / 2;
+    const mouthY = (upperLip.y + lowerLip.y) / 2;
+
     const h0 = hl[0];
     const indexTip = h0[8];
-    if (!indexTip) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    const wrist = h0[0];
+    const indexMCP = h0[5];
+    if (!indexTip || !wrist || !indexMCP) return { confidence: 0 };
 
-    const dist = Math.hypot((indexTip.x - mouthX), (indexTip.y - mouthY));
-    const near = dist < 0.15; // Further relaxed for ASD screening
-    const conf = near ? 0.95 : dist < 0.25 ? 0.6 : 0.0;
-    return { confidence: conf, validNow: near, biomechanicsOK: near };
+    const handSize = Math.hypot(wrist.x - indexMCP.x, wrist.y - indexMCP.y);
+    const dist = Math.hypot(indexTip.x - mouthX, indexTip.y - mouthY);
+    
+    const near = dist < handSize * 0.8; 
+    const conf = near ? 0.95 : dist < handSize * 1.5 ? 0.5 : 0;
+    return { confidence: conf };
   };
 
   // 7) Thumbs Up – thumb extended upward, others curled
   const detectThumbsUp = (hands) => {
     const hl = getHands(hands);
-    if (hl.length < 1) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    if (hl.length < 1) return { confidence: 0 };
     
     let bestConf = 0;
-    let anyValid = false;
 
     hl.forEach(h => {
       const wrist = h[0];
       const thumbTip = h[4];
       const thumbMCP = h[2];
       const indexTip = h[8];
-      const middleTip = h[12];
-      const ringTip = h[16];
-      const pinkyTip = h[20];
       
-      if (!wrist || !thumbTip || !thumbMCP || !indexTip || !middleTip || !ringTip || !pinkyTip) return;
+      if (!wrist || !thumbTip || !thumbMCP || !indexTip) return;
 
-      const thumbExtended = Math.hypot(thumbTip.x - thumbMCP.x, thumbTip.y - thumbMCP.y) > 0.05;
-      const othersCurled = [indexTip, middleTip, ringTip, pinkyTip].every(f => 
-        Math.hypot(f.x - wrist.x, f.y - wrist.y) < 0.3
-      );
-      const upward = (thumbTip.y - wrist.y) < -0.03;
+      const handSize = Math.hypot(wrist.x - indexTip.x, wrist.y - indexTip.y);
+      const thumbLen = Math.hypot(thumbTip.x - thumbMCP.x, thumbTip.y - thumbMCP.y);
+      
+      const thumbExtended = thumbLen > handSize * 0.4;
+      const upward = (wrist.y - thumbTip.y) > handSize * 0.3;
 
       let conf = 0;
-      if (thumbExtended && upward) {
-        conf = othersCurled ? 0.95 : 0.7;
-      } else if (thumbExtended || upward) {
-        conf = 0.4;
-      }
+      if (thumbExtended && upward) conf = 0.95;
+      else if (upward) conf = 0.6;
+      else if (thumbExtended) conf = 0.4;
 
       if (conf > bestConf) bestConf = conf;
-      if (thumbExtended && upward) anyValid = true;
     });
 
-    return { confidence: bestConf, validNow: anyValid, biomechanicsOK: anyValid };
+    return { confidence: bestConf };
   };
 
   // 8) Prayer – palms/wrists close
   const detectPrayer = (hands) => {
     const hl = getHands(hands);
-    if (hl.length < 2) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    if (hl.length < 2) return { confidence: 0 };
     const l = hl[0][0];
     const r = hl[1][0];
-    if (!l || !r) return { confidence: 0, validNow: false, biomechanicsOK: false };
+    if (!l || !r) return { confidence: 0 };
     
+    const lHandSize = Math.hypot(hl[0][0].x - hl[0][9].x, hl[0][0].y - hl[0][9].y);
+    const rHandSize = Math.hypot(hl[1][0].x - hl[1][9].x, hl[1][0].y - hl[1][9].y);
+    const avgHandSize = (lHandSize + rHandSize) / 2;
+
     const dist = Math.hypot(l.x - r.x, l.y - r.y);
-    const touching = dist < 0.18;
-    const near = dist < 0.35;
+    const near = dist < avgHandSize * 2.5;
+    const touching = dist < avgHandSize * 1.2;
     
-    // Check if hands are roughly vertical (wrists below fingertips)
-    const lTip = hl[0][12]; // middle fingertip
-    const rTip = hl[1][12];
-    const vertical = lTip && rTip && lTip.y < l.y && rTip.y < r.y;
-
     let conf = 0;
-    if (touching) {
-        conf = vertical ? 0.95 : 0.8;
-    } else if (near) {
-        conf = 0.5;
-    }
+    if (touching) conf = 0.95;
+    else if (near) conf = 0.5;
 
-    return { confidence: conf, validNow: touching, biomechanicsOK: touching };
+    return { confidence: conf };
   };
 
   // Final aggregation and backend payload
@@ -710,11 +696,16 @@ const FinalResults = ({ actions, results }) => {
       <div style={{ background: '#fff', borderRadius: 8, padding: 12, boxShadow: '0 1px 2px rgba(0,0,0,0.06)' }}>
         {actions.map((a, i) => {
           const r = results[i];
-          const ok = r?.success;
           return (
             <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i < actions.length - 1 ? '1px solid #eee' : 'none' }}>
               <span>{a.name}</span>
-              <span style={{ fontWeight: 600, color: ok ? '#10b981' : '#ef4444' }}>{ok ? '✔' : '✖'}</span>
+              <span style={{ 
+                fontWeight: 600, 
+                color: r?.status === 'correct' ? '#10b981' : r?.status === 'partial' ? '#f59e0b' : '#ef4444' 
+              }}>
+                {r?.status === 'correct' ? 'Detected ✅' : r?.status === 'partial' ? 'Partially Detected ⚠️' : 'Not Detected ❌'}
+                <small style={{ marginLeft: 8, color: '#666', fontWeight: 400 }}>({Math.round((r?.confidenceScore || 0) * 100)}%)</small>
+              </span>
             </div>
           );
         })}

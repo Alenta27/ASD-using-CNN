@@ -37,7 +37,8 @@ import TherapistSchedulePage from './pages/TherapistSchedulePage';
 import ResearchUsersPage from './pages/ResearchUsersPage';
 import ResearchDatasetPage from './pages/ResearchDatasetPage';
 import LearnMorePage from './pages/LearnMorePage';
-import VoiceScreeningPage from './pages/VoiceScreeningPage';
+import SpeechTherapyChildPage from './pages/SpeechTherapyChildPage';
+import SpeechTherapyDashboard from './pages/SpeechTherapyDashboard';
 import MRIScreeningPage from './pages/MRIScreeningPage';
 import GazeSnapshotCapture from './components/GazeSnapshotCapture';
 import GazeDashboard from './pages/GazeDashboard';
@@ -68,7 +69,7 @@ function App() {
           <Route path="/select-role" element={<SelectRolePage />} />
 
           {/* Public Screening & Info Routes */}
-          <Route path="/voice-screening" element={<VoiceScreeningPage />} />
+          <Route path="/speech-therapy" element={<SpeechTherapyChildPage />} />
           <Route path="/mri-screening" element={<MRIScreeningPage />} />
           <Route path="/live-gaze-analysis" element={<GazeSnapshotCapture />} />
           <Route path="/questionnaire" element={<QuestionnairePage />} />
@@ -116,6 +117,7 @@ function App() {
           <Route path="/therapist/notifications" element={<TherapistDashboard />} />
           <Route path="/therapist/settings" element={<TherapistDashboard />} />
           <Route path="/therapist/gaze-sessions" element={<GazeDashboard />} />
+          <Route path="/therapist/speech-therapy" element={<SpeechTherapyDashboard />} />
           <Route path="/research" element={<ResearchDashboard />} />
           <Route path="/research/users" element={<ResearchUsersPage />} />
           <Route path="/research/screenings" element={<ResearchDashboard />} />
@@ -140,6 +142,7 @@ function App() {
           <Route path="/teacher/assessments/:toolId" element={<TeacherBehavioralAssessmentDetailPage />} />
           <Route path="/teacher/assessments/analysis/:studentId" element={<BehavioralAnalysisReportPage />} />
           <Route path="/teacher/reports" element={<TeacherReportsPage />} />
+          <Route path="/teacher/speech-therapy" element={<SpeechTherapyDashboard />} />
           <Route path="/teacher/insights" element={<TeacherDashboard />} />
           <Route path="/teacher/feedback" element={<TeacherDashboard />} />
           <Route path="/teacher/settings" element={<TeacherDashboard />} />

@@ -20,6 +20,7 @@ const Sidebar = ({ activeNav, onNavClick, onLogout }) => {
     { id: 'students', label: 'My Students', icon: FiUsers, path: '/teacher/students' },
     { id: 'screenings', label: 'Student Screenings', icon: FiClipboard, path: '/teacher/screenings' },
     { id: 'assessments', label: 'Behavioral Assessments', icon: FiActivity, path: '/teacher/assessments' },
+    { id: 'speech-therapy', label: 'Speech Therapy', icon: FiActivity, path: '/teacher/speech-therapy' },
     { id: 'reports', label: 'Progress Reports', icon: FiBarChart2, path: '/teacher/reports' },
   ];
 

@@ -148,6 +148,14 @@ try {
   console.error('Social Attention Routes Error:', e.message);
 }
 
+// ✅ Speech Therapy Routes
+try {
+  app.use('/api/speech-therapy', require('./routes/speechTherapy'));
+  console.log('✅ Speech Therapy Routes Registered');
+} catch (e) {
+  console.error('Speech Therapy Routes Error:', e.message);
+}
+
 // ✅ MRI Scan Model: accept file upload and return stub JSON
 const multer = require('multer');
 

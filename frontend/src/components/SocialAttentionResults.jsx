@@ -16,7 +16,7 @@ const SocialAttentionResults = ({ results }) => {
 
   // Prepare timeline data from logs
   const timelineData = logs?.map((log, index) => ({
-    time: index * 0.1, // 10 FPS
+    time: Number((index * 0.3).toFixed(1)), // 300ms interval
     side: log.side === 'left' ? 1 : 0
   })) || [];
 
