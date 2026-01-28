@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Volume2, ThumbsUp, ThumbsDown, MinusCircle, Clock, CheckCircle, AlertCircle, TrendingUp, BarChart3 } from 'lucide-react';
+import { Volume2, ThumbsUp, ThumbsDown, MinusCircle, Clock, CheckCircle, AlertCircle, TrendingUp, BarChart3, Info, Star, Award, LineChart as LineChartIcon } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 export default function SpeechTherapyDashboard() {
   const [pendingSessions, setPendingSessions] = useState([]);
@@ -401,135 +402,191 @@ export default function SpeechTherapyDashboard() {
                 </div>
               ) : (
                 <div className="space-y-6">
-                  <div className="border-b pb-4">
-                    <h2 className="text-2xl font-bold text-gray-800 mb-2">
-                      {selectedChildForProgress?.name}'s Progress
-                    </h2>
+                  <div className="border-b pb-4 flex justify-between items-center">
+                    <div>
+                      <h2 className="text-2xl font-bold text-gray-800">
+                        {selectedChildForProgress?.name}'s Progress
+                      </h2>
+                      <p className="text-gray-500">Therapeutic Practice Insights</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <div className="flex flex-col items-center px-3 py-1 bg-yellow-50 rounded-lg border border-yellow-200">
+                        <Star className="text-yellow-500" size={16} />
+                        <span className="text-xs font-bold text-yellow-700">12 Stars</span>
+                      </div>
+                      <div className="flex flex-col items-center px-3 py-1 bg-blue-50 rounded-lg border border-blue-200">
+                        <Award className="text-blue-500" size={16} />
+                        <span className="text-xs font-bold text-blue-700">5 Badges</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Progress Chart */}
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                      <LineChartIcon size={20} className="text-indigo-600" />
+                      Performance Trend
+                    </h3>
+                    <div className="h-[250px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={progressData.sessions.map(s => ({
+                          name: new Date(s.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                          score: s.rating === 'Good' ? 3 : s.rating === 'Average' ? 2 : s.rating === 'Poor' ? 1 : 0
+                        }))}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                          <XAxis dataKey="name" fontSize={12} tickMargin={10} />
+                          <YAxis domain={[0, 3]} ticks={[1, 2, 3]} fontSize={12} />
+                          <Tooltip 
+                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
+                          />
+                          <Line 
+                            type="monotone" 
+                            dataKey="score" 
+                            stroke="#4f46e5" 
+                            strokeWidth={4} 
+                            dot={{ r: 6, fill: '#4f46e5', strokeWidth: 2, stroke: '#fff' }}
+                            activeDot={{ r: 8 }}
+                            name="Pronunciation Score"
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
                   </div>
 
                   {/* Statistics */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-blue-50 rounded-lg p-4 text-center">
+                    <div className="bg-blue-50 rounded-lg p-4 text-center border border-blue-100">
                       <p className="text-3xl font-bold text-blue-700">
                         {progressData.totalSessions}
                       </p>
-                      <p className="text-sm text-gray-600">Total Sessions</p>
+                      <p className="text-xs text-gray-600 font-semibold uppercase tracking-wider">Total Practice</p>
                     </div>
-                    <div className="bg-green-50 rounded-lg p-4 text-center">
+                    <div className="bg-green-50 rounded-lg p-4 text-center border border-green-100">
                       <p className="text-3xl font-bold text-green-700">
                         {progressData.evaluatedSessions}
                       </p>
-                      <p className="text-sm text-gray-600">Evaluated</p>
+                      <p className="text-xs text-gray-600 font-semibold uppercase tracking-wider">Reviewed</p>
                     </div>
-                    <div className="bg-yellow-50 rounded-lg p-4 text-center">
+                    <div className="bg-yellow-50 rounded-lg p-4 text-center border border-yellow-100">
                       <p className="text-3xl font-bold text-yellow-700">
                         {progressData.pendingSessions}
                       </p>
-                      <p className="text-sm text-gray-600">Pending</p>
+                      <p className="text-xs text-gray-600 font-semibold uppercase tracking-wider">Awaiting</p>
                     </div>
-                    <div className="bg-purple-50 rounded-lg p-4 text-center">
+                    <div className="bg-purple-50 rounded-lg p-4 text-center border border-purple-100">
                       <p className="text-3xl font-bold text-purple-700">
-                        {progressData.averageRating.toFixed(1)}/3
+                        {progressData.averageRating.toFixed(1)}
                       </p>
-                      <p className="text-sm text-gray-600">Avg Rating</p>
+                      <p className="text-xs text-gray-600 font-semibold uppercase tracking-wider">Avg Score</p>
                     </div>
                   </div>
 
                   {/* Improvement Status */}
-                  <div className={`rounded-lg p-4 flex items-center gap-3 ${
+                  <div className={`rounded-xl p-4 flex items-center gap-4 ${
                     progressData.improvement === 'Improving'
-                      ? 'bg-green-50 border-2 border-green-300'
+                      ? 'bg-green-50 border-2 border-green-200'
                       : progressData.improvement === 'Needs attention'
-                      ? 'bg-orange-50 border-2 border-orange-300'
-                      : 'bg-blue-50 border-2 border-blue-300'
+                      ? 'bg-orange-50 border-2 border-orange-200'
+                      : 'bg-blue-50 border-2 border-blue-200'
                   }`}>
-                    <TrendingUp size={32} />
+                    <div className={`p-3 rounded-full ${
+                      progressData.improvement === 'Improving' ? 'bg-green-200 text-green-700' : 'bg-blue-200 text-blue-700'
+                    }`}>
+                      <TrendingUp size={24} />
+                    </div>
                     <div>
                       <p className="font-bold text-lg">
-                        Progress: {progressData.improvement}
+                        Therapeutic Trend: {progressData.improvement}
                       </p>
                       <p className="text-sm text-gray-600">
-                        Based on recent session performance
+                        Consistent practice is key to communication development
                       </p>
                     </div>
                   </div>
 
                   {/* Rating Distribution */}
-                  <div>
-                    <h3 className="font-semibold text-gray-800 mb-3">Rating Distribution:</h3>
-                    <div className="space-y-3">
+                  <div className="bg-gray-50 rounded-xl p-5">
+                    <h3 className="font-bold text-gray-800 mb-4">Pronunciation Quality Distribution:</h3>
+                    <div className="space-y-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-20 text-sm font-semibold text-green-700">Good</div>
-                        <div className="flex-1 bg-gray-200 rounded-full h-6">
+                        <div className="w-20 text-xs font-bold text-green-700 uppercase">Good</div>
+                        <div className="flex-1 bg-gray-200 rounded-full h-4 overflow-hidden">
                           <div
-                            className="bg-green-500 h-6 rounded-full flex items-center justify-center text-white text-sm font-semibold"
+                            className="bg-green-500 h-full transition-all duration-500"
                             style={{
-                              width: `${(progressData.ratingDistribution.good / progressData.evaluatedSessions) * 100}%`
+                              width: `${progressData.evaluatedSessions > 0 ? (progressData.ratingDistribution.good / progressData.evaluatedSessions) * 100 : 0}%`
                             }}
-                          >
-                            {progressData.ratingDistribution.good}
-                          </div>
+                          ></div>
                         </div>
+                        <div className="w-8 text-right text-xs font-bold text-gray-600">{progressData.ratingDistribution.good}</div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <div className="w-20 text-sm font-semibold text-yellow-700">Average</div>
-                        <div className="flex-1 bg-gray-200 rounded-full h-6">
+                        <div className="w-20 text-xs font-bold text-yellow-700 uppercase">Average</div>
+                        <div className="flex-1 bg-gray-200 rounded-full h-4 overflow-hidden">
                           <div
-                            className="bg-yellow-500 h-6 rounded-full flex items-center justify-center text-white text-sm font-semibold"
+                            className="bg-yellow-500 h-full transition-all duration-500"
                             style={{
-                              width: `${(progressData.ratingDistribution.average / progressData.evaluatedSessions) * 100}%`
+                              width: `${progressData.evaluatedSessions > 0 ? (progressData.ratingDistribution.average / progressData.evaluatedSessions) * 100 : 0}%`
                             }}
-                          >
-                            {progressData.ratingDistribution.average}
-                          </div>
+                          ></div>
                         </div>
+                        <div className="w-8 text-right text-xs font-bold text-gray-600">{progressData.ratingDistribution.average}</div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <div className="w-20 text-sm font-semibold text-red-700">Poor</div>
-                        <div className="flex-1 bg-gray-200 rounded-full h-6">
+                        <div className="w-20 text-xs font-bold text-red-700 uppercase">Poor</div>
+                        <div className="flex-1 bg-gray-200 rounded-full h-4 overflow-hidden">
                           <div
-                            className="bg-red-500 h-6 rounded-full flex items-center justify-center text-white text-sm font-semibold"
+                            className="bg-red-500 h-full transition-all duration-500"
                             style={{
-                              width: `${(progressData.ratingDistribution.poor / progressData.evaluatedSessions) * 100}%`
+                              width: `${progressData.evaluatedSessions > 0 ? (progressData.ratingDistribution.poor / progressData.evaluatedSessions) * 100 : 0}%`
                             }}
-                          >
-                            {progressData.ratingDistribution.poor}
-                          </div>
+                          ></div>
                         </div>
+                        <div className="w-8 text-right text-xs font-bold text-gray-600">{progressData.ratingDistribution.poor}</div>
                       </div>
                     </div>
                   </div>
 
                   {/* Session History */}
                   <div>
-                    <h3 className="font-semibold text-gray-800 mb-3">Recent Sessions:</h3>
-                    <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                    <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+                      <Clock size={18} className="text-gray-500" />
+                      Recent Practice History:
+                    </h3>
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                       {progressData.sessions.slice(0, 10).map((session, idx) => (
-                        <div key={idx} className="border-2 border-gray-200 rounded-lg p-4">
+                        <div key={idx} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md transition">
                           <div className="flex items-start justify-between">
                             <div>
-                              <p className="font-semibold text-gray-800">
-                                Session #{session.sessionNumber}
-                              </p>
-                              <p className="text-sm text-gray-600">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="bg-indigo-100 text-indigo-700 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">Session #{session.sessionNumber}</span>
+                                <span className="text-xs text-gray-400">{formatDate(session.date)}</span>
+                              </div>
+                              <p className="text-lg font-bold text-gray-800">
                                 "{session.practicePrompt}"
                               </p>
                             </div>
-                            <span className={`px-3 py-1 rounded-full text-sm font-semibold border-2 ${getRatingColor(session.rating)}`}>
+                            <span className={`px-3 py-1 rounded-lg text-xs font-black uppercase tracking-tight border ${getRatingColor(session.rating)}`}>
                               {session.rating}
                             </span>
                           </div>
                           {session.feedback && (
-                            <p className="text-sm text-gray-600 mt-2 italic">
-                              "{session.feedback}"
-                            </p>
+                            <div className="mt-3 p-3 bg-gray-50 rounded-lg border-l-4 border-gray-300">
+                              <p className="text-sm text-gray-600 italic">
+                                "{session.feedback}"
+                              </p>
+                            </div>
                           )}
-                          <p className="text-xs text-gray-500 mt-2">
-                            {formatDate(session.date)}
-                          </p>
                         </div>
                       ))}
                     </div>
+                  </div>
+
+                  <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-start gap-3">
+                    <Info size={20} className="text-blue-600 shrink-0 mt-0.5" />
+                    <p className="text-xs text-blue-800 leading-relaxed">
+                      <strong>Disclaimer:</strong> This dashboard displays progress for speech therapy support and practice. These metrics are therapeutic indicators provided by teachers and therapists to track communication improvement and are not medical diagnoses.
+                    </p>
                   </div>
                 </div>
               )}
