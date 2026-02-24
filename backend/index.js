@@ -156,6 +156,14 @@ try {
   console.error('Speech Therapy Routes Error:', e.message);
 }
 
+// ✅ Subscription Routes
+try {
+  app.use('/api/subscription', require('./routes/subscription'));
+  console.log('✅ Subscription Routes Registered');
+} catch (e) {
+  console.error('Subscription Routes Error:', e.message);
+}
+
 // ✅ MRI Scan Model: accept file upload and return stub JSON
 const multer = require('multer');
 
@@ -326,6 +334,13 @@ async function start() {
     try {
       await mongoose.connect(mongoUri);
       console.log('✅ MongoDB Connected');
+      
+      // 🧹 DEV MODE: Clear all subscriptions on server start
+      // Set CLEAR_SUBSCRIPTIONS=true in .env to enable
+      if (process.env.CLEAR_SUBSCRIPTIONS === 'true') {
+        const { clearAllSubscriptions } = require('./utils/clearSubscriptions');
+        await clearAllSubscriptions();
+      }
     } catch (err) {
       console.error('❌ MongoDB Connection Failed:', err.message);
     }

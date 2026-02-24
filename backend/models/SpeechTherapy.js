@@ -12,7 +12,13 @@ const speechTherapySchema = new mongoose.Schema({
   childId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Patient', 
-    required: true,
+    required: false,
+    index: true
+  },
+  speechChildId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SpeechChild',
+    required: false,
     index: true
   },
   
@@ -43,6 +49,25 @@ const speechTherapySchema = new mongoose.Schema({
     type: String,
     required: false,
     description: "Path to the sample audio played to the child"
+  },
+  
+  // PRO Features
+  language: {
+    type: String,
+    enum: ['English', 'Malayalam', 'Hindi'],
+    default: 'English'
+  },
+  aiSimilarityScore: {
+    type: Number,
+    min: 0,
+    max: 100,
+    required: false,
+    description: "AI-calculated similarity score between child's speech and sample"
+  },
+  aiFeedback: {
+    type: String,
+    required: false,
+    description: "AI-generated automated feedback"
   },
   
   // Therapist Evaluation

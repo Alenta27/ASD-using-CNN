@@ -1,3 +1,4 @@
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import RegisterPage from './pages/RegisterPage';
@@ -37,7 +38,7 @@ import TherapistSchedulePage from './pages/TherapistSchedulePage';
 import ResearchUsersPage from './pages/ResearchUsersPage';
 import ResearchDatasetPage from './pages/ResearchDatasetPage';
 import LearnMorePage from './pages/LearnMorePage';
-import SpeechTherapyChildPage from './pages/SpeechTherapyChildPage';
+import SpeechTherapyChildPage from './pages/SpeechTherapyChildPage.jsx';
 import SpeechTherapyDashboard from './pages/SpeechTherapyDashboard';
 import MRIScreeningPage from './pages/MRIScreeningPage';
 import GazeSnapshotCapture from './components/GazeSnapshotCapture';
@@ -54,8 +55,14 @@ import ParentCareTeamPage from './pages/ParentCareTeamPage';
 import ParentResourcesPage from './pages/ParentResourcesPage';
 import ParentSettingsPage from './pages/ParentSettingsPage';
 import PaymentPage from './pages/PaymentPage';
+import { cleanupExpiredSubscription } from './utils/subscriptionUtils';
 
 function App() {
+  useEffect(() => {
+    // CRITICAL: Enforce time-based Pro expiry on every app boot/refresh
+    cleanupExpiredSubscription();
+  }, []);
+
   return (
     <Router>
         <Routes>

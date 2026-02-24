@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech Therapy Subscription - Test Console</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #667eea;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .section {
+            margin-bottom: 25px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        .section h3 {
+            margin-top: 0;
+            color: #667eea;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            margin: 5px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        button.danger {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        button.success {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+        .output {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            margin-top: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .status {
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-weight: 600;
+        }
+        .status.pro {
+            background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%);
+            color: #2d3436;
+        }
+        .status.free {
+            background: #dfe6e9;
+            color: #2d3436;
+        }
+        .status.expired {
+            background: #fab1a0;
+            color: #d63031;
+        }
+        .info {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 12px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Consolas', monospace;
+            color: #e83e8c;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Speech Therapy Subscription Tester</h1>
+        <p class="subtitle">Test the time-based subscription fix</p>
+
+        <div class="section">
+            <h3>📊 Current Status</h3>
+            <button class="success" onclick="checkStatus()">🔍 Check Current Status</button>
+            <div id="status-output" class="output"></div>
+        </div>
+
+        <div class="section">
+            <h3>🧪 Test Scenarios</h3>
+            <div class="info">
+                <strong>Test 1:</strong> Set valid subscription (expires in 7 days)
+            </div>
+            <button onclick="setValidSubscription()">✅ Set Valid Pro (7 days)</button>
+            
+            <div class="info" style="margin-top: 15px;">
+                <strong>Test 2:</strong> Set expired subscription (already expired)
+            </div>
+            <button class="danger" onclick="setExpiredSubscription()">❌ Set Expired Pro</button>
+            
+            <div class="info" style="margin-top: 15px;">
+                <strong>Test 3:</strong> Clean up expired subscriptions (simulates app boot)
+            </div>
+            <button onclick="runCleanup()">🧹 Run Cleanup (App Boot)</button>
+            
+            <div class="info" style="margin-top: 15px;">
+                <strong>Test 4:</strong> Add legacy boolean flags (bad old data)
+            </div>
+            <button class="danger" onclick="addLegacyFlags()">⚠️ Add Legacy Flags</button>
+        </div>
+
+        <div class="section">
+            <h3>🗄️ LocalStorage Manager</h3>
+            <button onclick="viewLocalStorage()">👁️ View speech_user</button>
+            <button class="danger" onclick="clearLocalStorage()">🗑️ Clear speech_user</button>
+            <div id="localstorage-output" class="output"></div>
+        </div>
+
+        <div class="section">
+            <h3>📝 Test Results</h3>
+            <div id="test-output" class="output">
+Ready to test... Click any button above to start.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Helper function to simulate isSpeechPro()
+        function isSpeechPro() {
+            try {
+                const speechUserRaw = localStorage.getItem('speech_user');
+                if (!speechUserRaw) return false;
+                
+                const speechUser = JSON.parse(speechUserRaw);
+                if (!speechUser?.planExpiry) return false;
+                
+                const expiryDate = new Date(speechUser.planExpiry);
+                if (isNaN(expiryDate.getTime())) return false;
+                
+                return new Date() < expiryDate;
+            } catch (e) {
+                console.error('Error checking Pro status:', e);
+                return false;
+            }
+        }
+
+        // Helper function to simulate cleanupExpiredSubscription()
+        function cleanupExpiredSubscription() {
+            try {
+                const speechUserRaw = localStorage.getItem('speech_user');
+                if (!speechUserRaw) return { cleaned: false, message: 'No speech_user found' };
+
+                const speechUser = JSON.parse(speechUserRaw);
+                let needsUpdate = false;
+                let changes = [];
+
+                // Check if planExpiry exists and is expired
+                if (speechUser.planExpiry) {
+                    const expiryDate = new Date(speechUser.planExpiry);
+                    const isExpired = isNaN(expiryDate.getTime()) || new Date() >= expiryDate;
+
+                    if (isExpired) {
+                        changes.push('❌ Removed expired planExpiry');
+                        delete speechUser.planExpiry;
+                        needsUpdate = true;
+                    }
+                }
+
+                // Remove all legacy/invalid subscription keys
+                const legacyKeys = ['plan', 'expiryDate', 'isPro', 'hasPro', 'isSubscribed', 'role'];
+                legacyKeys.forEach(key => {
+                    if (speechUser[key] !== undefined) {
+                        changes.push(`🧹 Removed legacy key: ${key}`);
+                        delete speechUser[key];
+                        needsUpdate = true;
+                    }
+                });
+
+                if (needsUpdate) {
+                    localStorage.setItem('speech_user', JSON.stringify(speechUser));
+                    return { cleaned: true, changes };
+                }
+                
+                return { cleaned: false, message: '✅ No cleanup needed' };
+            } catch (e) {
+                return { cleaned: false, message: `⚠️ Error: ${e.message}` };
+            }
+        }
+
+        function log(message, elementId = 'test-output') {
+            const output = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            output.textContent += `\n[${timestamp}] ${message}`;
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function clearLog(elementId = 'test-output') {
+            document.getElementById(elementId).textContent = '';
+        }
+
+        function checkStatus() {
+            clearLog('status-output');
+            const isPro = isSpeechPro();
+            const speechUserRaw = localStorage.getItem('speech_user');
+            
+            if (!speechUserRaw) {
+                log('❌ No speech_user found in localStorage', 'status-output');
+                log('Status: FREE (not registered)', 'status-output');
+                return;
+            }
+
+            const speechUser = JSON.parse(speechUserRaw);
+            log(`📧 Email: ${speechUser.email || 'N/A'}`, 'status-output');
+            log(`👶 Child: ${speechUser.childName || 'N/A'}`, 'status-output');
+            log(`👤 Parent: ${speechUser.parentName || 'N/A'}`, 'status-output');
+            
+            if (speechUser.planExpiry) {
+                const expiryDate = new Date(speechUser.planExpiry);
+                const now = new Date();
+                const daysLeft = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
+                
+                log(`\n📅 Plan Expiry: ${expiryDate.toLocaleString()}`, 'status-output');
+                log(`⏳ Days Remaining: ${daysLeft}`, 'status-output');
+                log(`\n🎯 Current Status: ${isPro ? '✅ PRO' : '❌ FREE (expired)'}`, 'status-output');
+            } else {
+                log(`\n🎯 Current Status: ❌ FREE (no planExpiry)`, 'status-output');
+            }
+
+            // Check for legacy keys
+            const legacyKeys = ['plan', 'expiryDate', 'isPro', 'hasPro', 'isSubscribed', 'role'];
+            const foundLegacy = legacyKeys.filter(key => speechUser[key] !== undefined);
+            if (foundLegacy.length > 0) {
+                log(`\n⚠️ WARNING: Legacy keys found: ${foundLegacy.join(', ')}`, 'status-output');
+            }
+        }
+
+        function setValidSubscription() {
+            clearLog();
+            log('Setting valid Pro subscription (expires in 7 days)...');
+            
+            const expiryDate = new Date();
+            expiryDate.setDate(expiryDate.getDate() + 7);
+            
+            const speechUser = {
+                email: 'test@example.com',
+                childName: 'Gigi',
+                parentName: 'Test Parent',
+                planExpiry: expiryDate.toISOString()
+            };
+            
+            localStorage.setItem('speech_user', JSON.stringify(speechUser));
+            log('✅ Valid subscription set!');
+            log(`Expiry: ${expiryDate.toLocaleString()}`);
+            log(`\nChecking status...`);
+            
+            setTimeout(() => {
+                const isPro = isSpeechPro();
+                log(`Result: ${isPro ? '✅ PRO ACTIVE' : '❌ FREE'}`);
+            }, 100);
+        }
+
+        function setExpiredSubscription() {
+            clearLog();
+            log('Setting expired Pro subscription (expired 1 day ago)...');
+            
+            const expiryDate = new Date();
+            expiryDate.setDate(expiryDate.getDate() - 1);
+            
+            const speechUser = {
+                email: 'test@example.com',
+                childName: 'Gigi',
+                parentName: 'Test Parent',
+                planExpiry: expiryDate.toISOString()
+            };
+            
+            localStorage.setItem('speech_user', JSON.stringify(speechUser));
+            log('✅ Expired subscription set!');
+            log(`Expiry: ${expiryDate.toLocaleString()}`);
+            log(`\nChecking status...`);
+            
+            setTimeout(() => {
+                const isPro = isSpeechPro();
+                log(`Result: ${isPro ? '✅ PRO ACTIVE' : '❌ FREE (expired as expected)'}`);
+                log(`\n💡 Now run "Run Cleanup" to simulate app boot`);
+            }, 100);
+        }
+
+        function runCleanup() {
+            clearLog();
+            log('Running cleanupExpiredSubscription() (simulating app boot)...');
+            log('─'.repeat(50));
+            
+            const result = cleanupExpiredSubscription();
+            
+            if (result.cleaned) {
+                log('🧹 CLEANUP PERFORMED:');
+                result.changes.forEach(change => log(`  ${change}`));
+                log(`\n✅ Cleaned up ${result.changes.length} issue(s)`);
+            } else {
+                log(result.message);
+            }
+            
+            log('─'.repeat(50));
+            log('\nChecking final status...');
+            
+            setTimeout(() => {
+                const isPro = isSpeechPro();
+                log(`Final Result: ${isPro ? '✅ PRO ACTIVE' : '❌ FREE'}`);
+            }, 100);
+        }
+
+        function addLegacyFlags() {
+            clearLog();
+            log('Adding legacy boolean flags (simulating old broken data)...');
+            
+            const speechUserRaw = localStorage.getItem('speech_user');
+            if (!speechUserRaw) {
+                log('❌ No speech_user found. Create one first!');
+                return;
+            }
+            
+            const speechUser = JSON.parse(speechUserRaw);
+            speechUser.isPro = true;
+            speechUser.hasPro = true;
+            speechUser.isSubscribed = true;
+            speechUser.role = 'pro_user';
+            speechUser.plan = 'annual';
+            speechUser.expiryDate = '2027-12-31';
+            
+            localStorage.setItem('speech_user', JSON.stringify(speechUser));
+            log('⚠️ Added legacy flags: isPro, hasPro, isSubscribed, role, plan, expiryDate');
+            log('\n💡 These should be removed by cleanup on next app boot');
+            log('💡 Run "Run Cleanup" to test the fix');
+        }
+
+        function viewLocalStorage() {
+            clearLog('localstorage-output');
+            const speechUserRaw = localStorage.getItem('speech_user');
+            
+            if (!speechUserRaw) {
+                log('❌ No speech_user found in localStorage', 'localstorage-output');
+                return;
+            }
+            
+            try {
+                const speechUser = JSON.parse(speechUserRaw);
+                log('📦 speech_user contents:', 'localstorage-output');
+                log(JSON.stringify(speechUser, null, 2), 'localstorage-output');
+            } catch (e) {
+                log(`⚠️ Error parsing: ${e.message}`, 'localstorage-output');
+            }
+        }
+
+        function clearLocalStorage() {
+            clearLog('localstorage-output');
+            localStorage.removeItem('speech_user');
+            log('🗑️ Cleared speech_user from localStorage', 'localstorage-output');
+            log('✅ You are now in FREE mode', 'localstorage-output');
+        }
+
+        // Auto-check status on load
+        window.addEventListener('load', () => {
+            checkStatus();
+        });
+    </script>
+</body>
+</html>

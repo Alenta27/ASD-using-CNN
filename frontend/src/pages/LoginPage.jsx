@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
 import { jwtDecode } from 'jwt-decode';
+import { sanitizeUserObject } from '../utils/subscriptionUtils';
 
 const googleClientId = (process.env.REACT_APP_GOOGLE_CLIENT_ID || "3074679378-fbmg47osjqajq7u4cv0qja7svo00pv3m.apps.googleusercontent.com").trim();
 
@@ -96,6 +97,10 @@ export default function LoginPage() {
         localStorage.setItem(roleIdField[role], res.data.user[roleIdField[role]]);
       }
       
+      if (res.data.user) {
+        localStorage.setItem('user', JSON.stringify(sanitizeUserObject(res.data.user)));
+      }
+      
       handleLoginSuccess(res.data.token);
     } catch (err) {
       setMessage(err.response?.data?.message || 'Sign in failed.');
@@ -142,6 +147,7 @@ export default function LoginPage() {
         if (idField && res.data.user[idField]) {
           localStorage.setItem(idField, res.data.user[idField]);
         }
+        localStorage.setItem('user', JSON.stringify(sanitizeUserObject(res.data.user)));
       }
       
       if (res.data.isNewUser) {
@@ -212,6 +218,7 @@ export default function LoginPage() {
   const eyeOffIcon = ( <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.91 4.24A9.97 9.97 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.94 4.06M2 2l20 20"></path></svg> );
 
   return (
+    <GoogleOAuthProvider clientId={googleClientId}>
     <div className="min-h-screen md:flex font-sans">
         <div
           className="relative hidden md:block md:w-1/2 bg-cover bg-center"
@@ -379,5 +386,6 @@ export default function LoginPage() {
           </div>
         </div>
       </div>
+    </GoogleOAuthProvider>
   );
 }
