@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: asd-backend
+    runtime: node
+    buildCommand: npm ci --production=false && pip install -r requirements.txt
+    startCommand: node index.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 22.22.0
+      - key: PYTHON_BIN
+        value: python3

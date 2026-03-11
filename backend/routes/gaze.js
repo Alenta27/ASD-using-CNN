@@ -8,6 +8,7 @@ const { verifyToken, therapistCheck } = require('../middlewares/auth');
 const GazeSession = require('../models/GazeSession');
 const Patient = require('../models/patient');
 const User = require('../models/user');
+const trackScreening = require('../utils/trackScreening');
 
 // Helper function to auto-link guest sessions to patient
 async function autoLinkGuestSessions(patientId, parentEmail) {
@@ -62,7 +63,7 @@ const storage = multer.diskStorage({
     }
 });
 
-const upload = multer({ 
+const upload = multer({
     storage,
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
     fileFilter: (req, file, cb) => {
@@ -110,10 +111,10 @@ async function handleSnapshotUpload(req, res, sessionId, analyze) {
             const pythonProcess = spawn('py', ['-3.10', gazeWorkerPath, imagePath]);
             let output = '';
             let errorOutput = '';
-            
+
             pythonProcess.stdout.on('data', (data) => output += data.toString());
             pythonProcess.stderr.on('data', (data) => errorOutput += data.toString());
-            
+
             const timeout = setTimeout(() => {
                 pythonProcess.kill();
                 console.error('Snapshot analysis timed out');
@@ -169,15 +170,15 @@ router.post('/analyze', async (req, res) => {
         fs.writeFileSync(tempFilePath, base64Data, 'base64');
 
         const gazeWorkerPath = path.resolve(__dirname, '../gaze_worker.py');
-        
+
         const result = await new Promise((resolve) => {
             const pythonProcess = spawn('py', ['-3.10', gazeWorkerPath, tempFilePath]);
             let output = '';
             let errorOutput = '';
-            
+
             pythonProcess.stdout.on('data', (data) => output += data.toString());
             pythonProcess.stderr.on('data', (data) => errorOutput += data.toString());
-            
+
             const timeout = setTimeout(() => {
                 pythonProcess.kill();
                 resolve({ error: 'Analysis timed out after 60s' });
@@ -201,7 +202,7 @@ router.post('/analyze', async (req, res) => {
         res.status(500).json({ error: 'Gaze analysis failed: ' + err.message });
     } finally {
         if (tempFilePath && fs.existsSync(tempFilePath)) {
-            try { fs.unlinkSync(tempFilePath); } catch (e) {}
+            try { fs.unlinkSync(tempFilePath); } catch (e) { }
         }
     }
 });
@@ -242,7 +243,7 @@ router.post('/session/guest/start', async (req, res) => {
     try {
         const { childName, parentName, email } = req.body;
         console.log('🚀 Starting guest session request:', { childName, parentName, email });
-        
+
         const session = new GazeSession({
             isGuest: true,
             sessionType: 'guest_screening', // CRITICAL: Set for recovery
@@ -270,7 +271,7 @@ router.post('/session/guest/start', async (req, res) => {
 router.post('/session/start', verifyToken, async (req, res) => {
     try {
         const { patientId } = req.body;
-        
+
         const patient = await Patient.findById(patientId);
         if (!patient) {
             return res.status(404).json({ error: 'Patient not found' });
@@ -326,7 +327,7 @@ router.post('/session/snapshot', verifyGuestOrUser, upload.single('image'), asyn
     try {
         const { sessionId, analyze } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
-        
+
         const result = await handleSnapshotUpload(req, res, sessionId, analyze);
         if (result) res.status(200).json(result);
     } catch (err) {
@@ -340,7 +341,7 @@ router.post('/upload', verifyGuestOrUser, upload.single('image'), async (req, re
     try {
         const { sessionId, analyze } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
-        
+
         const result = await handleSnapshotUpload(req, res, sessionId, analyze);
         if (result) res.status(200).json(result);
     } catch (err) {
@@ -352,10 +353,10 @@ router.post('/upload', verifyGuestOrUser, upload.single('image'), async (req, re
 // Therapist direct save - Save session directly to patient record
 router.post('/therapist/save-to-patient', verifyToken, therapistCheck, async (req, res) => {
     const savedFiles = []; // Track saved files for rollback
-    
+
     try {
         const { patientId, snapshots } = req.body;
-        
+
         console.log('👨‍⚕️ Therapist Direct Save - Live Gaze');
         console.log(`📋 Patient ID: ${patientId}`);
         console.log(`📸 Snapshots: ${snapshots?.length || 0}`);
@@ -377,18 +378,18 @@ router.post('/therapist/save-to-patient', verifyToken, therapistCheck, async (re
 
         // STEP 1: Process and save all snapshot images first (atomic)
         const processedSnapshots = [];
-        
+
         for (let i = 0; i < snapshots.length; i++) {
             const snap = snapshots[i];
-            
+
             try {
                 const base64Data = snap.image.replace(/^data:image\/\w+;base64,/, "");
                 const filename = `therapist-gaze-${Date.now()}-${Math.round(Math.random() * 1E9)}.png`;
                 const filePath = path.join(gazeUploadsDir, filename);
-                
+
                 fs.writeFileSync(filePath, base64Data, 'base64');
                 savedFiles.push(filePath);
-                
+
                 processedSnapshots.push({
                     imagePath: `/uploads/gaze/${filename}`,
                     timestamp: snap.timestamp || new Date(),
@@ -396,7 +397,7 @@ router.post('/therapist/save-to-patient', verifyToken, therapistCheck, async (re
                     gazeDirection: snap.gazeDirection || 'unknown',
                     status: snap.status || 'captured'
                 });
-                
+
                 console.log(`✅ Saved snapshot ${i + 1}: ${filename}`);
             } catch (err) {
                 console.error(`❌ Error processing snapshot ${i + 1}:`, err.message);
@@ -421,21 +422,21 @@ router.post('/therapist/save-to-patient', verifyToken, therapistCheck, async (re
         });
 
         await gazeSession.save();
-        
+
         console.log(`✅ Therapist session saved to patient record: ${gazeSession._id}`);
         console.log(`📋 Patient: ${patient.name}, Therapist: ${req.user.name}`);
 
-        res.status(200).json({ 
+        res.status(200).json({
             success: true,
             message: 'Session saved to patient record successfully.',
             sessionId: gazeSession._id,
             patientName: patient.name,
             snapshotsProcessed: processedSnapshots.length
         });
-        
+
     } catch (err) {
         console.error('❌ Error in therapist direct save:', err);
-        
+
         // ROLLBACK: Delete all saved images if DB save fails
         console.log(`🔄 Rolling back ${savedFiles.length} saved images...`);
         for (const filePath of savedFiles) {
@@ -448,10 +449,10 @@ router.post('/therapist/save-to-patient', verifyToken, therapistCheck, async (re
                 console.error(`⚠️ Failed to delete ${filePath}:`, deleteErr.message);
             }
         }
-        
-        res.status(500).json({ 
+
+        res.status(500).json({
             error: 'Failed to save session to patient record',
-            details: err.message 
+            details: err.message
         });
     }
 });
@@ -459,7 +460,7 @@ router.post('/therapist/save-to-patient', verifyToken, therapistCheck, async (re
 // Send session for review (bulk upload) - ATOMIC OPERATION
 router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
     const savedFiles = []; // Track saved files for rollback
-    
+
     try {
         const { sessionId, snapshots, endTime, sessionType, assignedRole, source } = req.body;
         console.log('\n' + '='.repeat(70));
@@ -471,7 +472,7 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
         console.log(`   - Type: ${sessionType}`);
         console.log(`   - Assigned: ${assignedRole}`);
         console.log(`   - Source: ${source}`);
-        
+
         if (snapshots && snapshots.length > 0) {
             console.log(`\n📸 Snapshot Details:`);
             snapshots.forEach((snap, i) => {
@@ -490,7 +491,7 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
             console.error(`❌ Session ${sessionId} not found in send-for-review`);
             return res.status(404).json({ error: 'Session not found' });
         }
-        
+
         console.log(`\n📋 Existing session:`);
         console.log(`   - Current snapshots: ${session.snapshots?.length || 0}`);
         console.log(`   - Current status: ${session.status}`);
@@ -500,16 +501,16 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
         const processedSnapshots = [];
         if (snapshots && Array.isArray(snapshots) && snapshots.length > 0) {
             console.log(`💾 Processing ${snapshots.length} snapshots for session ${sessionId}`);
-            
+
             for (let i = 0; i < snapshots.length; i++) {
                 const snap = snapshots[i];
                 try {
                     // Avoid duplicating snapshots that might have been uploaded live
-                    const isDuplicate = session.snapshots.some(existing => 
-                        existing.timestamp && snap.timestamp && 
+                    const isDuplicate = session.snapshots.some(existing =>
+                        existing.timestamp && snap.timestamp &&
                         new Date(existing.timestamp).getTime() === new Date(snap.timestamp).getTime()
                     );
-                    
+
                     if (isDuplicate) {
                         console.log(`⏭️ Skipping duplicate snapshot from ${snap.timestamp}`);
                         continue;
@@ -518,18 +519,18 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
                     const base64Data = snap.image.replace(/^data:image\/\w+;base64,/, "");
                     const filename = `gaze-${Date.now()}-${Math.round(Math.random() * 1E9)}.png`;
                     const filePath = path.join(gazeUploadsDir, filename);
-                    
+
                     // Save image to disk
                     fs.writeFileSync(filePath, base64Data, 'base64');
                     savedFiles.push(filePath); // Track for potential rollback
-                    
+
                     processedSnapshots.push({
                         imagePath: `/uploads/gaze/${filename}`,
                         timestamp: snap.timestamp || new Date(),
                         attentionScore: snap.attentionScore || 0,
                         gazeDirection: snap.gazeDirection || 'unknown'
                     });
-                    
+
                     console.log(`✅ Saved snapshot ${i + 1}/${snapshots.length}: ${filename}`);
                 } catch (err) {
                     console.error(`❌ Error processing snapshot ${i + 1}:`, err.message);
@@ -539,7 +540,7 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
 
             console.log(`✅ Processed ${processedSnapshots.length} snapshots for session ${sessionId}`);
         }
-        
+
         // STEP 2: Update session in database (only after all images are saved)
         if (processedSnapshots.length > 0) {
             session.snapshots.push(...processedSnapshots);
@@ -549,14 +550,14 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
         if (sessionType) session.sessionType = sessionType;
         if (assignedRole) session.assignedRole = assignedRole;
         if (source) session.source = source;
-        
+
         // Mark as live_gaze module if not set
         if (!session.module) {
             session.module = 'live_gaze';
         }
-        
+
         await session.save();
-        
+
         console.log('\n' + '='.repeat(70));
         console.log('✅ SESSION SAVED SUCCESSFULLY');
         console.log('='.repeat(70));
@@ -572,17 +573,17 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
             });
         }
         console.log('='.repeat(70) + '\n');
-        
-        res.status(200).json({ 
-            success: true, 
+
+        res.status(200).json({
+            success: true,
             message: `Session sent for review successfully with ${session.snapshots.length} snapshots`,
             snapshotCount: session.snapshots.length,
             sessionId: sessionId
         });
-        
+
     } catch (err) {
         console.error(`❌ Error in send-for-review:`, err);
-        
+
         // ROLLBACK: Delete all saved images if operation fails
         if (savedFiles.length > 0) {
             console.log(`🔄 Rolling back ${savedFiles.length} saved images...`);
@@ -597,8 +598,8 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
                 }
             }
         }
-        
-        res.status(500).json({ 
+
+        res.status(500).json({
             error: 'Failed to send session for review',
             details: err.message
         });
@@ -610,10 +611,33 @@ router.post('/session/end/:sessionId', verifyToken, async (req, res) => {
     try {
         const { sessionId } = req.params;
         const session = await GazeSession.findByIdAndUpdate(
-            sessionId, 
+            sessionId,
             { status: 'completed', endTime: new Date() },
             { new: true }
         );
+        // Track gaze screening in the central Screening collection
+        if (session) {
+            // NEW: Accept patientId from request body
+            const patientId = req.body.patientId || null;
+            
+            // Calculate attention score for tracking
+            const attentionScore = session.attentionScore || 0.5; // Use session's score or default
+            
+            trackScreening({
+                patientId: patientId, // NEW
+                userId: session.therapistId || req.user?.id || null,
+                screeningType: 'gaze',
+                resultScore: attentionScore / 100, // Normalize to 0-1
+                resultLabel: attentionScore > 70 ? 'Low Risk' : attentionScore > 40 ? 'Moderate Risk' : 'High Risk',
+                confidenceScore: 0.8, // Placeholder confidence
+                metrics: {
+                    gazDirection: session.gazDirection,
+                    attentionScore: session.attentionScore,
+                    headPitch: session.headPitch,
+                    headYaw: session.headYaw
+                }
+            });
+        }
         res.status(200).json(session);
     } catch (err) {
         res.status(500).json({ error: 'Failed to end session' });
@@ -624,12 +648,12 @@ router.post('/session/end/:sessionId', verifyToken, async (req, res) => {
 // LIVE TAB: Only show therapist's own active sessions, NOT guest sessions
 router.get('/sessions/active', verifyToken, therapistCheck, async (req, res) => {
     try {
-        const sessions = await GazeSession.find({ 
+        const sessions = await GazeSession.find({
             therapistId: req.user.id,
             isGuest: false, // Explicitly exclude guest sessions
             status: 'active'
         }).populate('patientId', 'name');
-        
+
         console.log(`🔴 LIVE: Found ${sessions.length} active therapist sessions`);
         res.status(200).json(sessions);
     } catch (err) {
@@ -646,19 +670,19 @@ router.get('/sessions/pending-review', verifyToken, therapistCheck, async (req, 
         console.log('='.repeat(70));
         console.log(`Therapist ID: ${req.user.id}`);
         console.log(`Timestamp: ${new Date().toISOString()}`);
-        
+
         const { sessionId } = req.query;
-        
+
         // STEP 1: Query raw database - NO TIME FILTERS, NO STATUS FILTERS
         let rawQuery;
-        
+
         if (sessionId) {
             console.log(`\n🎯 Specific session requested: ${sessionId}`);
             rawQuery = { _id: sessionId };
         } else {
             // RAW DATABASE QUERY: module = 'live_gaze' ONLY
             // Remove ALL other filters (status, time, etc.)
-            rawQuery = { 
+            rawQuery = {
                 module: 'live_gaze',
                 // Must have photos
                 snapshots: { $exists: true, $not: { $size: 0 } }
@@ -670,15 +694,15 @@ router.get('/sessions/pending-review', verifyToken, therapistCheck, async (req, 
             console.log('   - NO time filter');
             console.log('   - NO therapist filter');
         }
-        
+
         const sessions = await GazeSession.find(rawQuery)
             .populate('patientId', 'name age gender')
             .populate('therapistId', 'name email')
             .sort({ createdAt: -1 })
             .limit(5000); // Very high limit
-        
+
         console.log(`\n✅ Raw query returned ${sessions.length} sessions`);
-        
+
         // STEP 2: Analyze what we found
         const analysis = {
             total: sessions.length,
@@ -688,7 +712,7 @@ router.get('/sessions/pending-review', verifyToken, therapistCheck, async (req, 
             withPatient: 0,
             excluded: []
         };
-        
+
         sessions.forEach(s => {
             const status = s.status || 'NULL';
             const type = s.sessionType || 'NULL';
@@ -697,7 +721,7 @@ router.get('/sessions/pending-review', verifyToken, therapistCheck, async (req, 
             if (s.isGuest || s.guestInfo?.email) analysis.withGuest++;
             if (s.patientId) analysis.withPatient++;
         });
-        
+
         console.log('\n📊 Analysis:');
         console.log('   Status Breakdown:');
         Object.entries(analysis.byStatus).forEach(([status, count]) => {
@@ -709,11 +733,11 @@ router.get('/sessions/pending-review', verifyToken, therapistCheck, async (req, 
         });
         console.log(`   Guest Sessions: ${analysis.withGuest}`);
         console.log(`   Patient Sessions: ${analysis.withPatient}`);
-        
+
         // STEP 3: Validate and fix image URLs
         const validatedSessions = sessions.map(session => {
             const sessionObj = session.toObject();
-            
+
             // Fix image paths
             if (sessionObj.snapshots && sessionObj.snapshots.length > 0) {
                 sessionObj.snapshots = sessionObj.snapshots.map(snap => {
@@ -727,16 +751,16 @@ router.get('/sessions/pending-review', verifyToken, therapistCheck, async (req, 
                     return snap;
                 });
             }
-            
+
             return sessionObj;
         });
-        
+
         // STEP 4: Log sample sessions
         if (validatedSessions.length > 0) {
             const oldest = validatedSessions[validatedSessions.length - 1];
             const newest = validatedSessions[0];
             console.log(`\n📅 Date Range: ${new Date(oldest.createdAt).toLocaleString()} → ${new Date(newest.createdAt).toLocaleString()}`);
-            
+
             console.log('\n📸 Sample Sessions (first 10):');
             validatedSessions.slice(0, 10).forEach((s, i) => {
                 const guestName = s.guestInfo?.childName || s.guestInfo?.email?.split('@')[0] || 'Unknown';
@@ -747,7 +771,7 @@ router.get('/sessions/pending-review', verifyToken, therapistCheck, async (req, 
                 console.log(`      Type: ${s.isGuest ? 'Guest' : 'Patient'}, Status: ${s.status || 'NULL'}`);
                 console.log(`      📸 SNAPSHOTS: ${snapshotCount} images`);
                 console.log(`      Date: ${new Date(s.createdAt).toLocaleString()}`);
-                
+
                 // Show first 3 image paths to verify they exist
                 if (snapshotCount > 0) {
                     console.log(`      Image paths:`);
@@ -766,11 +790,11 @@ router.get('/sessions/pending-review', verifyToken, therapistCheck, async (req, 
             console.log('\n⚠️  WARNING: No sessions found matching criteria!');
             console.log('   This indicates the database is empty or module field is incorrect.');
         }
-        
+
         console.log('\n' + '='.repeat(70));
         console.log(`✅ Returning ${validatedSessions.length} sessions to frontend`);
         console.log('='.repeat(70) + '\n');
-        
+
         res.status(200).json(validatedSessions);
     } catch (err) {
         console.error('\n❌ ERROR in pending-review endpoint:', err);
@@ -787,7 +811,7 @@ router.get('/sessions/diagnostic', verifyToken, therapistCheck, async (req, res)
             .populate('patientId', 'name')
             .sort({ createdAt: -1 })
             .limit(100);
-        
+
         const summary = {
             total: allSessions.length,
             withSnapshots: allSessions.filter(s => s.snapshots && s.snapshots.length > 0).length,
@@ -805,12 +829,12 @@ router.get('/sessions/diagnostic', verifyToken, therapistCheck, async (req, res)
                 date: s.createdAt
             }))
         };
-        
+
         console.log(`🔍 DIAGNOSTIC: Found ${summary.total} total sessions`);
         console.log(`   - With photos: ${summary.withSnapshots}`);
         console.log(`   - Guest sessions: ${summary.guestSessions}`);
         console.log(`   - Pending review: ${summary.pendingReview}`);
-        
+
         res.json(summary);
     } catch (err) {
         console.error('❌ Diagnostic error:', err);
@@ -822,18 +846,18 @@ router.get('/sessions/diagnostic', verifyToken, therapistCheck, async (req, res)
 router.get('/images/check', verifyToken, therapistCheck, async (req, res) => {
     try {
         const gazeDir = path.join(__dirname, '../uploads/gaze');
-        
+
         if (!fs.existsSync(gazeDir)) {
-            return res.json({ 
-                exists: false, 
+            return res.json({
+                exists: false,
                 message: 'Gaze uploads directory does not exist',
-                path: gazeDir 
+                path: gazeDir
             });
         }
-        
+
         const files = fs.readdirSync(gazeDir);
         const imageFiles = files.filter(f => f.match(/\.(jpg|jpeg|png|gif)$/i));
-        
+
         // Get file stats
         const fileDetails = imageFiles.slice(0, 20).map(file => {
             const filePath = path.join(gazeDir, file);
@@ -845,7 +869,7 @@ router.get('/images/check', verifyToken, therapistCheck, async (req, res) => {
                 path: `/uploads/gaze/${file}`
             };
         });
-        
+
         res.json({
             exists: true,
             path: gazeDir,
@@ -864,44 +888,44 @@ router.get('/session/:sessionId', verifyToken, therapistCheck, async (req, res) 
     try {
         const { sessionId } = req.params;
         console.log(`🔍 Fetching session by ID: ${sessionId}`);
-        
+
         const session = await GazeSession.findById(sessionId)
             .populate('patientId', 'name age gender')
             .populate('therapistId', 'name email')
             .populate('reviewedBy', 'name email');
-        
+
         if (!session) {
             console.log(`❌ Session ${sessionId} not found`);
             return res.status(404).json({ error: 'Session not found' });
         }
-        
+
         // Validate image paths exist
         const gazeDir = path.join(__dirname, '../uploads/gaze');
         const validatedSnapshots = session.snapshots.map(snap => {
             const snapObj = snap.toObject();
-            
+
             // Check if file exists
             if (snapObj.imagePath) {
                 const filename = snapObj.imagePath.split('/').pop();
                 const filePath = path.join(gazeDir, filename);
                 snapObj.fileExists = fs.existsSync(filePath);
-                
+
                 if (!snapObj.fileExists) {
                     console.log(`⚠️  Missing image file: ${filename}`);
                 }
             }
-            
+
             return snapObj;
         });
-        
+
         const sessionObj = session.toObject();
         sessionObj.snapshots = validatedSnapshots;
         sessionObj.snapshotCount = validatedSnapshots.length;
         sessionObj.validImages = validatedSnapshots.filter(s => s.fileExists).length;
         sessionObj.missingImages = validatedSnapshots.filter(s => !s.fileExists).length;
-        
+
         console.log(`✅ Session found: ${sessionObj.snapshotCount} snapshots (${sessionObj.validImages} valid, ${sessionObj.missingImages} missing)`);
-        
+
         res.json(sessionObj);
     } catch (err) {
         console.error('❌ Error fetching session:', err);

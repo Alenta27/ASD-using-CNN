@@ -51,6 +51,7 @@ function ScreeningPage() {
     const child = children.find(c => c.id === childId) || null;
 
     const [selectedFile, setSelectedFile] = useState(null);
+    const [imagePreview, setImagePreview] = useState(null);
     const [predictionResult, setPredictionResult] = useState(null);
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -63,6 +64,13 @@ function ScreeningPage() {
             setFileName(file.name);
             setPredictionResult(null);
             setError('');
+            
+            // Create image preview
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setImagePreview(reader.result);
+            };
+            reader.readAsDataURL(file);
         }
     };
 
@@ -139,6 +147,20 @@ function ScreeningPage() {
                             </span>
                             <input id="file-upload" type="file" onChange={handleFileChange} accept="image/*" className="hidden" />
                         </div>
+
+                        {/* Image Preview Section */}
+                        {imagePreview && (
+                            <div className="border-2 border-gray-300 rounded-lg p-4 bg-gray-50">
+                                <p className="text-sm font-semibold text-gray-700 mb-2 text-center">Child's Photo to Analyze:</p>
+                                <div className="flex justify-center">
+                                    <img 
+                                        src={imagePreview} 
+                                        alt="Child to analyze" 
+                                        className="max-h-64 rounded-lg shadow-md object-contain"
+                                    />
+                                </div>
+                            </div>
+                        )}
 
                         <button 
                             type="submit" 

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { FaUserPlus, FaUserEdit, FaTrash, FaFileMedicalAlt, FaHistory, FaGraduationCap, FaClipboardList, FaUsers, FaLightbulb, FaHeart, FaHome, FaCalendar, FaChartLine, FaFileAlt, FaUserTie, FaBook, FaCog, FaBell, FaSearch } from 'react-icons/fa';
+import { FaUserPlus, FaUserEdit, FaTrash, FaFileMedicalAlt, FaHistory, FaGraduationCap, FaClipboardList, FaUsers, FaLightbulb, FaHeart, FaHome, FaCalendar, FaChartLine, FaFileAlt, FaUserTie, FaBook, FaCog, FaBell, FaSearch, FaBrain } from 'react-icons/fa';
 import { FiLogOut } from 'react-icons/fi';
 import SurveyInsights from '../components/SurveyInsights';
 
@@ -408,7 +408,7 @@ const DashboardPage = () => {
       { id: 'dashboard', label: 'Dashboard', icon: FaHome, path: '/dashboard' },
       { id: 'appointments', label: 'Appointments', icon: FaCalendar, path: '/parent/appointments' },
       { id: 'screening', label: 'Screening Results', icon: FaChartLine, path: '/parent/screening-results' },
-      { id: 'reports', label: 'Progress Reports', icon: FaFileAlt, path: '/parent/progress-reports' },
+      { id: 'attention', label: 'Attention Analysis', icon: FaBrain, path: '/parent/attention-analysis' },
       { id: 'care-team', label: 'Care Team', icon: FaUserTie, path: '/parent/care-team' },
       { id: 'resources', label: 'Resources', icon: FaBook, path: '/parent/resources' },
       { id: 'settings', label: 'Settings', icon: FaCog, path: '/parent/settings' },
@@ -666,12 +666,12 @@ const DashboardPage = () => {
                           </button>
                           <button
                             onClick={() => {
-                              setActiveNav('reports');
-                              navigate(`/parent/progress-reports?childId=${child._id || child.id}`);
+                              setActiveNav('attention');
+                              navigate(`/parent/attention-analysis?childId=${child._id || child.id}`);
                             }}
                             className="w-full px-4 py-2 bg-blue-200 text-blue-800 rounded-lg hover:bg-blue-300 transition font-semibold text-sm"
                           >
-                            Progress Reports
+                            Attention Analysis
                           </button>
                           <button
                             onClick={() => {

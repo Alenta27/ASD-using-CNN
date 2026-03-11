@@ -36,11 +36,11 @@ const MRIScreeningPage = () => {
     setResult(null);
 
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('mri_scan', file);
 
     try {
       console.log('📤 Uploading MRI file...');
-      const response = await fetch('http://localhost:5000/api/predict-mri', {
+      const response = await fetch('http://localhost:5002/predict_mri', {
         method: 'POST',
         body: formData,
       });

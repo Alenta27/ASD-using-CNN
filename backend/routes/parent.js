@@ -12,6 +12,12 @@ const Report = require('../models/report');
 const Appointment = require('../models/appointment');
 const Slot = require('../models/slot');
 
+// Initialize Razorpay
+const razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
 // Get available slots (no auth required for testing)
 router.get('/available-slots-public', async (req, res) => {
   try {
@@ -541,7 +547,7 @@ router.get('/activity', verifyToken, async (req, res) => {
 
 router.post('/predict-survey', verifyToken, async (req, res) => {
   try {
-    const { answers } = req.body;
+    const { answers, patientId } = req.body; // NEW: Accept patientId
 
     if (!answers) {
       return res.status(400).json({ error: 'Survey answers are required' });
@@ -549,6 +555,7 @@ router.post('/predict-survey', verifyToken, async (req, res) => {
 
     const pythonBin = process.env.PYTHON_BIN || 'python';
     const workerPath = path.join(__dirname, '..', 'predict_survey.py');
+    const trackScreening = require('../utils/trackScreening'); // NEW: Import tracking
 
     let stdoutData = '';
     let stderrData = '';
@@ -585,6 +592,19 @@ router.post('/predict-survey', verifyToken, async (req, res) => {
       try {
         const result = JSON.parse(stdoutData.trim());
         console.log('✅ Survey Prediction Success:', result);
+        
+        // NEW: Track questionnaire screening
+        const resultScore = result.probability || result.risk_score || 0.5;
+        trackScreening({
+          patientId: patientId || null,
+          userId: req.user?.id || null,
+          screeningType: 'questionnaire',
+          resultScore: resultScore,
+          resultLabel: result.prediction || result.diagnosis || 'Unknown',
+          confidenceScore: result.confidence || resultScore,
+          questionnaireAnswers: answers
+        });
+        
         res.json(result);
       } catch (parseErr) {
         console.error('Failed to parse prediction output:', stdoutData);
@@ -645,11 +665,27 @@ router.post('/create-payment-order', verifyToken, async (req, res) => {
 
     await tempAppointment.save();
 
+    // Create Razorpay order
+    const amountInPaise = (appointmentFee || 500) * 100; // Convert to paise
+    const razorpayOrder = await razorpay.orders.create({
+      amount: amountInPaise,
+      currency: 'INR',
+      receipt: `appointment_${tempAppointment._id}`,
+      notes: {
+        appointmentId: tempAppointment._id.toString(),
+        childId: child._id.toString(),
+        therapistId: therapist._id.toString(),
+        parentId: req.user.id
+      }
+    });
+
+    console.log('Razorpay order created:', razorpayOrder.id);
+
     res.json({
-      orderId: `order_dummy_${Date.now()}`,
+      orderId: razorpayOrder.id,
       appointmentId: tempAppointment._id,
       amount: appointmentFee || 500,
-      keyId: 'dummy_key',
+      keyId: process.env.RAZORPAY_KEY_ID,
       therapistName: therapist.username,
       childName: child.name,
       appointmentDate,
@@ -664,7 +700,7 @@ router.post('/create-payment-order', verifyToken, async (req, res) => {
 // Verify payment and confirm appointment
 router.post('/verify-payment', verifyToken, async (req, res) => {
   try {
-    const { appointmentId } = req.body;
+    const { appointmentId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
     if (!appointmentId) {
       return res.status(400).json({ message: 'Missing appointment ID' });
@@ -675,23 +711,194 @@ router.post('/verify-payment', verifyToken, async (req, res) => {
       return res.status(404).json({ message: 'Appointment not found.' });
     }
 
-    // Dummy payment always succeeds
-    appointment.paymentStatus = 'completed';
-    appointment.razorpayPaymentId = `pay_dummy_${Date.now()}`;
-    appointment.paymentDate = new Date();
-    appointment.status = 'confirmed';
+    // Verify Razorpay signature
+    if (razorpay_order_id && razorpay_payment_id && razorpay_signature) {
+      const sign = razorpay_order_id + '|' + razorpay_payment_id;
+      const expectedSign = crypto
+        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+        .update(sign.toString())
+        .digest('hex');
+
+      if (razorpay_signature !== expectedSign) {
+        console.error('❌ Invalid payment signature');
+        return res.status(400).json({ 
+          success: false,
+          message: 'Invalid payment signature' 
+        });
+      }
+      
+      console.log('✅ Payment signature verified successfully!');
+      
+      // Update appointment with payment details
+      appointment.paymentStatus = 'completed';
+      appointment.razorpayOrderId = razorpay_order_id;
+      appointment.razorpayPaymentId = razorpay_payment_id;
+      appointment.paymentDate = new Date();
+      appointment.status = 'confirmed';
+    } else {
+      // For backward compatibility or testing (dummy payment)
+      appointment.paymentStatus = 'completed';
+      appointment.razorpayPaymentId = `pay_dummy_${Date.now()}`;
+      appointment.paymentDate = new Date();
+      appointment.status = 'confirmed';
+    }
     
     await appointment.save();
     await appointment.populate('childId', 'name');
     await appointment.populate('therapistId', 'username email');
 
     res.json({
+      success: true,
       message: 'Payment verified successfully. Appointment confirmed!',
       appointment,
       paymentStatus: 'completed'
     });
   } catch (error) {
     console.error('POST /verify-payment - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ========================================
+// ATTENTION GAME ROUTES
+// ========================================
+
+const AttentionGameResult = require('../models/AttentionGameResult');
+
+// Save attention game result
+router.post('/attention-games/result', verifyToken, parentCheck, async (req, res) => {
+  try {
+    const {
+      childId,
+      gameId,
+      gameName,
+      score,
+      accuracy,
+      reactionTime,
+      completionTime,
+      mistakes,
+      attentionScore,
+      attentionLevel
+    } = req.body;
+
+    // Verify that the child belongs to this parent
+    const child = await Patient.findById(childId);
+    if (!child) {
+      return res.status(404).json({ message: 'Child not found' });
+    }
+
+    // Check if the child belongs to the parent
+    const parent = await User.findById(req.user.id);
+    if (!parent || child.parent_id.toString() !== parent._id.toString()) {
+      return res.status(403).json({ message: 'You do not have permission to save results for this child' });
+    }
+
+    // Create new game result
+    const gameResult = new AttentionGameResult({
+      childId,
+      gameId,
+      gameName,
+      score,
+      accuracy,
+      reactionTime: parseFloat(reactionTime),
+      completionTime: parseFloat(completionTime),
+      mistakes,
+      attentionScore,
+      attentionLevel
+    });
+
+    await gameResult.save();
+
+    res.status(201).json(gameResult);
+  } catch (error) {
+    console.error('Error saving attention game result:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get attention game history for a child
+router.get('/attention-games/history/:childId', verifyToken, parentCheck, async (req, res) => {
+  try {
+    const { childId } = req.params;
+
+    // Verify that the child belongs to this parent
+    const child = await Patient.findById(childId);
+    if (!child) {
+      return res.status(404).json({ message: 'Child not found' });
+    }
+
+    const parent = await User.findById(req.user.id);
+    if (!parent || child.parent_id.toString() !== parent._id.toString()) {
+      return res.status(403).json({ message: 'You do not have permission to view results for this child' });
+    }
+
+    // Get all game results for this child, sorted by most recent first
+    const gameHistory = await AttentionGameResult.find({ childId })
+      .sort({ playedAt: -1 })
+      .limit(50); // Limit to last 50 games
+
+    res.json(gameHistory);
+  } catch (error) {
+    console.error('Error fetching attention game history:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get attention game statistics for a child
+router.get('/attention-games/stats/:childId', verifyToken, parentCheck, async (req, res) => {
+  try {
+    const { childId } = req.params;
+
+    // Verify that the child belongs to this parent
+    const child = await Patient.findById(childId);
+    if (!child) {
+      return res.status(404).json({ message: 'Child not found' });
+    }
+
+    const parent = await User.findById(req.user.id);
+    if (!parent || child.parent_id.toString() !== parent._id.toString()) {
+      return res.status(403).json({ message: 'You do not have permission to view stats for this child' });
+    }
+
+    // Get statistics
+    const allResults = await AttentionGameResult.find({ childId });
+
+    if (allResults.length === 0) {
+      return res.json({
+        totalGames: 0,
+        averageAccuracy: 0,
+        averageAttentionScore: 0,
+        mostPlayedGame: null,
+        recentAttentionLevel: null
+      });
+    }
+
+    const totalGames = allResults.length;
+    const averageAccuracy = allResults.reduce((sum, r) => sum + r.accuracy, 0) / totalGames;
+    const averageAttentionScore = allResults.reduce((sum, r) => sum + r.attentionScore, 0) / totalGames;
+
+    // Find most played game
+    const gameCounts = {};
+    allResults.forEach(r => {
+      gameCounts[r.gameName] = (gameCounts[r.gameName] || 0) + 1;
+    });
+    const mostPlayedGame = Object.keys(gameCounts).reduce((a, b) => 
+      gameCounts[a] > gameCounts[b] ? a : b
+    );
+
+    // Get most recent attention level
+    const recentResult = allResults.sort((a, b) => b.playedAt - a.playedAt)[0];
+    const recentAttentionLevel = recentResult.attentionLevel;
+
+    res.json({
+      totalGames,
+      averageAccuracy: Math.round(averageAccuracy),
+      averageAttentionScore: Math.round(averageAttentionScore),
+      mostPlayedGame,
+      recentAttentionLevel
+    });
+  } catch (error) {
+    console.error('Error fetching attention game stats:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });

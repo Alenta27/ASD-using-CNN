@@ -11,6 +11,7 @@ const User = require('../models/user');
 const SpeechParent = require('../models/SpeechParent');
 const SpeechChild = require('../models/SpeechChild');
 const { authenticateToken } = require('../middlewares/auth');
+const trackScreening = require('../utils/trackScreening');
 
 // Configure multer for audio file uploads
 const storage = multer.diskStorage({
@@ -27,14 +28,14 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
     const allowedTypes = /webm|mp3|wav|ogg|m4a|mp4/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
     const mimetype = allowedTypes.test(file.mimetype);
-    
+
     if (mimetype && extname) {
       return cb(null, true);
     } else {
@@ -59,10 +60,10 @@ router.post('/parent', async (req, res) => {
     // Check if parent already exists
     let parent = await SpeechParent.findOne({ parentEmail });
     if (parent) {
-      return res.json({ 
-        message: 'Parent profile already exists', 
+      return res.json({
+        message: 'Parent profile already exists',
         parentId: parent._id,
-        parent 
+        parent
       });
     }
 
@@ -107,7 +108,7 @@ router.post('/child', async (req, res) => {
 
     // Generate unique child ID
     const childId = generateUniqueId('child');
-    
+
     // Create child profile
     const child = new SpeechChild({
       childId,
@@ -153,7 +154,7 @@ router.get('/subscription/:childId', async (req, res) => {
       isPro,
       subscriptionExpiry: child.subscriptionExpiry,
       preferredLanguage: child.preferredLanguage,
-      message: isPro 
+      message: isPro
         ? `Pro subscription active until ${new Date(child.subscriptionExpiry).toLocaleDateString()}`
         : 'No active Pro subscription. Only English is available.'
     });
@@ -179,7 +180,7 @@ router.get('/subscription-status', async (req, res) => {
 
     if (!childId) {
       console.log('❌ Subscription check failed: No childId provided');
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'childId query parameter is required',
         status: 'NONE'
       });
@@ -188,7 +189,7 @@ router.get('/subscription-status', async (req, res) => {
     const child = await SpeechChild.findById(childId);
     if (!child) {
       console.log('❌ Subscription check failed: Child not found:', childId);
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Child not found',
         status: 'NONE'
       });
@@ -196,17 +197,17 @@ router.get('/subscription-status', async (req, res) => {
 
     const now = new Date();
     let status = 'NONE';
-    
+
     console.log('🔍 [SUBSCRIPTION CHECK] Checking subscription for child:', child.childName);
     console.log('  📋 Child ID:', childId);
     console.log('  📅 Subscription Expiry:', child.subscriptionExpiry);
     console.log('  🕐 Current Time:', now.toISOString());
-    
+
     if (child.subscriptionExpiry) {
       const expiryDate = new Date(child.subscriptionExpiry);
       console.log('  📅 Expiry Date (parsed):', expiryDate.toISOString());
       console.log('  ⏰ Time until expiry (hours):', ((expiryDate - now) / (1000 * 60 * 60)).toFixed(2));
-      
+
       if (now < expiryDate) {
         status = 'ACTIVE';
         console.log('  ✅ Status: ACTIVE');
@@ -233,7 +234,7 @@ router.get('/subscription-status', async (req, res) => {
     });
   } catch (error) {
     console.error('Error checking subscription status:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to check subscription status',
       status: 'NONE'
     });
@@ -248,7 +249,7 @@ router.get('/subscription-status', async (req, res) => {
 router.get('/children/:parentId', async (req, res) => {
   try {
     const { parentId } = req.params;
-    
+
     const parent = await SpeechParent.findById(parentId);
     if (!parent) {
       return res.status(404).json({ error: 'Parent not found' });
@@ -276,7 +277,7 @@ router.get('/parent-status/:parentId', async (req, res) => {
     }
 
     const children = await SpeechChild.find({ parentId });
-    
+
     res.json({
       parent,
       children
@@ -311,7 +312,7 @@ router.post('/upload', upload.single('audio'), async (req, res) => {
     // Verify child exists
     let child = await Patient.findById(childId);
     let speechChild = null;
-    
+
     if (!child) {
       speechChild = await SpeechChild.findById(childId);
       if (!speechChild) {
@@ -330,7 +331,7 @@ router.post('/upload', upload.single('audio'), async (req, res) => {
       if (req.file && fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
       }
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: 'Premium language support requires an active child subscription',
         proFeature: true,
         message: 'Malayalam and Hindi speech therapy require a Pro plan.'
@@ -341,18 +342,18 @@ router.post('/upload', upload.single('audio'), async (req, res) => {
     if (!isPro && isEnglish) {
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
-      
+
       const query = child ? { childId } : { speechChildId: childId };
       const dailySessions = await SpeechTherapy.countDocuments({
         ...query,
         sessionDate: { $gte: startOfDay }
       });
 
-      if (dailySessions >= 10) { 
+      if (dailySessions >= 10) {
         if (req.file && fs.existsSync(req.file.path)) {
           fs.unlinkSync(req.file.path);
         }
-        return res.status(403).json({ 
+        return res.status(403).json({
           error: 'Daily limit reached for free English sessions',
           limitReached: true,
           message: 'Unlock Speech Therapy Pro for unlimited practice sessions.'
@@ -363,7 +364,7 @@ router.post('/upload', upload.single('audio'), async (req, res) => {
     // Get session number for this child
     const query = child ? { childId } : { speechChildId: childId };
     const sessionCount = await SpeechTherapy.countDocuments(query);
-    
+
     // Create new speech therapy session
     const sessionData = {
       audioFilePath: req.file.path,
@@ -384,6 +385,13 @@ router.post('/upload', upload.single('audio'), async (req, res) => {
     const newSession = new SpeechTherapy(sessionData);
 
     await newSession.save();
+
+    // Track this speech screening in the central Screening collection
+    trackScreening({
+      userId: null, // Speech module uses parentId, not main user auth
+      childName: child ? child.name : (speechChild ? speechChild.childName : null),
+      screeningType: 'voice'
+    });
 
     // Generate AI feedback if child is PRO
     if (isPro) {
@@ -427,7 +435,7 @@ router.get('/child/:childId', async (req, res) => {
     // Security check: verify child belongs to that parent
     const parentUser = await User.findOne({ parentId });
     const child = await Patient.findById(childId);
-    
+
     if (!parentUser || !child || child.parent_id.toString() !== parentUser._id.toString()) {
       return res.status(403).json({ error: 'Access denied. This child does not belong to you.' });
     }
@@ -545,13 +553,13 @@ router.get('/progress/:childId', async (req, res) => {
         isAuthorized = true;
       }
     }
-    
+
     if (!isAuthorized) {
       return res.status(403).json({ error: 'Access denied. This child does not belong to you.' });
     }
 
-    const sessions = await SpeechTherapy.find({ 
-      $or: [{ childId }, { speechChildId: childId }] 
+    const sessions = await SpeechTherapy.find({
+      $or: [{ childId }, { speechChildId: childId }]
     }).sort({ sessionDate: 1 });
 
     if (sessions.length === 0) {
@@ -567,23 +575,23 @@ router.get('/progress/:childId', async (req, res) => {
     // Calculate statistics
     const evaluatedSessions = sessions.filter(s => s.status === 'evaluated');
     const ratingValues = { 'Poor': 1, 'Average': 2, 'Good': 3 };
-    
+
     const ratingsSum = evaluatedSessions.reduce((sum, s) => {
       return sum + (ratingValues[s.rating] || 0);
     }, 0);
 
-    const averageRating = evaluatedSessions.length > 0 
+    const averageRating = evaluatedSessions.length > 0
       ? (ratingsSum / evaluatedSessions.length).toFixed(2)
       : 0;
 
     // Calculate improvement trend (comparing first 3 and last 3 sessions)
     let improvement = 'Insufficient data';
     if (evaluatedSessions.length >= 6) {
-      const first3Avg = evaluatedSessions.slice(0, 3).reduce((sum, s) => 
+      const first3Avg = evaluatedSessions.slice(0, 3).reduce((sum, s) =>
         sum + (ratingValues[s.rating] || 0), 0) / 3;
-      const last3Avg = evaluatedSessions.slice(-3).reduce((sum, s) => 
+      const last3Avg = evaluatedSessions.slice(-3).reduce((sum, s) =>
         sum + (ratingValues[s.rating] || 0), 0) / 3;
-      
+
       const diff = last3Avg - first3Avg;
       if (diff > 0.3) improvement = 'Improving';
       else if (diff < -0.3) improvement = 'Needs attention';
@@ -649,7 +657,7 @@ router.get('/audio/:sessionId', async (req, res) => {
         isAuthorized = true;
       }
     }
-    
+
     if (!isAuthorized) {
       return res.status(403).json({ error: 'Access denied. This recording does not belong to your child.' });
     }
@@ -725,7 +733,7 @@ router.delete('/:sessionId', async (req, res) => {
         isAuthorized = true;
       }
     }
-    
+
     if (!isAuthorized) {
       return res.status(403).json({ error: 'Access denied. You do not have permission to delete this session.' });
     }

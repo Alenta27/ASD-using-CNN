@@ -16,10 +16,10 @@ const ACTIONS = [
   { id: 'prayer', name: 'Hands Together (Prayer)', emoji: '🤲', timeLimit: 8 }
 ];
 
-// Thresholds
-const SUSTAIN_FRAMES = 15; // Increased for ~1 second of data (assuming 15-20fps)
-const CONFIDENCE_CORRECT = 0.75; 
-const CONFIDENCE_PARTIAL = 0.4;  
+// Thresholds - Very forgiving for testing
+const SUSTAIN_FRAMES = 8; // Reduced to ~0.5 seconds for faster detection
+const CONFIDENCE_CORRECT = 0.35; // Very low threshold for correct detection
+const CONFIDENCE_PARTIAL = 0.15; // Very low threshold for partial
 const WINDOW_SIZE = 30; // ~1.5 - 2 seconds temporal window
 
 const ImitationGame = ({ studentId, onComplete }) => {
@@ -52,6 +52,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
   const rafRef = useRef(null);
   const actionTimerRef = useRef(null);
   const demoTimerRef = useRef(null);
+  const phaseRef = useRef('idle');
 
   // Gesture tracking
   const lastVideoTimeRef = useRef(-1);
@@ -61,6 +62,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
   const clapCycleRef = useRef({ lastDist: null, cycles: 0 });
   const handsRaisedRef = useRef({ start: null });
   const neutralSmileBaselineRef = useRef(null);
+  const processFrameLoggedRef = useRef(false);
 
   useEffect(() => {
     initModels();
@@ -97,6 +99,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
         numFaces: 1
       });
       setIsLoadingModel(false);
+      console.log('[ImitationGame] MediaPipe models loaded successfully');
     } catch (e) {
       console.error('Model init failed', e);
       setIsLoadingModel(false);
@@ -106,6 +109,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
   const startGame = async () => {
     setCameraError(null);
+    phaseRef.current = 'camera_ready';
     setPhase('camera_ready');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -118,11 +122,13 @@ const ImitationGame = ({ studentId, onComplete }) => {
           videoRef.current.play().then(() => {
             setCameraReady(true);
             setSessionStartTime(Date.now());
+            console.log('[ImitationGame] Camera ready, starting demo phase');
             // proceed to demo
             nextPhaseDemo();
           }).catch(err => {
             console.error('Video play error', err);
             setCameraError('Could not start video. Please try again.');
+            phaseRef.current = 'idle';
             setPhase('idle');
           });
         };
@@ -130,6 +136,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
     } catch (e) {
       console.error('Camera error', e);
       setCameraError('Camera access denied or unavailable. Please allow access and retry.');
+      phaseRef.current = 'idle';
       setPhase('idle');
     }
   };
@@ -145,11 +152,16 @@ const ImitationGame = ({ studentId, onComplete }) => {
   };
 
   // Phase transitions
-  const nextPhaseDemo = () => {
-    if (currentIndex >= ACTIONS.length) {
+  const nextPhaseDemo = (nextIndex = null) => {
+    // Use provided nextIndex or current state
+    const indexToUse = nextIndex !== null ? nextIndex : currentIndex;
+    
+    if (indexToUse >= ACTIONS.length) {
+      console.log('[ImitationGame] All actions complete, finalizing results');
       finalizeResults();
       return;
     }
+    phaseRef.current = 'demo_action';
     setPhase('demo_action');
     setFeedbackText('Get ready...');
     setDetectionState('none');
@@ -160,7 +172,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
     clapCycleRef.current = { lastDist: null, cycles: 0 };
     handsRaisedRef.current = { start: null };
     // rebaseline smile at start of smile action
-    if (ACTIONS[currentIndex].id === 'smile') neutralSmileBaselineRef.current = null;
+    if (ACTIONS[indexToUse].id === 'smile') neutralSmileBaselineRef.current = null;
 
     let c = 3;
     setCountdown(c);
@@ -178,11 +190,23 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
   const startImitation = () => {
     const action = ACTIONS[currentIndex];
+    
+    // Safety check
+    if (!action) {
+      console.error('[ImitationGame] No action at index', currentIndex);
+      finalizeResults();
+      return;
+    }
+    
+    phaseRef.current = 'imitate';
     setPhase('imitate');
     setActionStartTime(Date.now());
     setTimeLeft(action.timeLimit);
     setFeedbackText('Detecting gesture…');
     setConfidencePct(0);
+    processFrameLoggedRef.current = false; // Reset for new action
+
+    console.log(`[ImitationGame] Starting detection for action: ${action.id} (${action.name})`);
 
     if (actionTimerRef.current) clearInterval(actionTimerRef.current);
     let t = action.timeLimit;
@@ -202,9 +226,16 @@ const ImitationGame = ({ studentId, onComplete }) => {
   };
 
   const processFrame = () => {
-    if (!videoRef.current || phase !== 'imitate') return;
+    if (!videoRef.current || phaseRef.current !== 'imitate') return;
 
-    const timestamp = Date.now();
+    // Log first frame for debugging
+    if (!processFrameLoggedRef.current) {
+      console.log('[ImitationGame] processFrame started, phase:', phaseRef.current);
+      processFrameLoggedRef.current = true;
+    }
+
+    // Use performance.now() for MediaPipe timestamp (monotonic, not epoch-based)
+    const timestamp = performance.now();
     if (videoRef.current.currentTime !== lastVideoTimeRef.current) {
       lastVideoTimeRef.current = videoRef.current.currentTime;
 
@@ -213,10 +244,46 @@ const ImitationGame = ({ studentId, onComplete }) => {
         const hands = handLM.current?.detectForVideo(videoRef.current, timestamp);
         const face = faceLM.current?.detectForVideo(videoRef.current, timestamp);
 
+        // Debug logging - check data structure
+        if (Math.random() < 0.05) { // ~5% of frames
+          console.log('[ImitationGame] MediaPipe Raw Data Structure:', {
+            pose: { 
+              hasLandmarks: !!pose?.landmarks, 
+              landmarksLength: pose?.landmarks?.length,
+              firstLandmarkType: Array.isArray(pose?.landmarks?.[0]) ? 'array' : typeof pose?.landmarks?.[0]
+            },
+            hands: { 
+              hasLandmarks: !!hands?.landmarks, 
+              landmarksLength: hands?.landmarks?.length,
+              hasHandLandmarks: !!hands?.handLandmarks,
+              handLandmarksLength: hands?.handLandmarks?.length,
+              hasHandedness: !!hands?.handedness
+            },
+            face: { 
+              hasLandmarks: !!face?.landmarks, 
+              landmarksLength: face?.landmarks?.length,
+              hasBlendshapes: !!face?.faceBlendshapes,
+              blendshapesLength: face?.faceBlendshapes?.length
+            },
+            currentAction: ACTIONS[currentIndex].id
+          });
+        }
+
         const action = ACTIONS[currentIndex];
         const det = detectAction(action.id, pose, hands, face);
         
         const conf = Math.max(0, Math.min(1, det.confidence || 0));
+        
+        // Debug log confidence (occasionally) with more details
+        if (Math.random() < 0.1) { // 10% of frames for more visibility
+          console.log(`[ImitationGame] ${action.id} detection result:`, {
+            rawConfidence: det.confidence,
+            clampedConf: conf,
+            handsLandmarksLength: hands?.landmarks?.length || hands?.handLandmarks?.length || 0,
+            poseLandmarksLength: pose?.landmarks?.length || 0,
+            faceBlendshapesLength: face?.faceBlendshapes?.length || 0
+          });
+        }
         
         // Accumulate in temporal window
         historyRef.current.push(conf);
@@ -239,6 +306,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
           
           // If we have enough frames and high confidence, we can conclude early
           if (recentHistory.length >= SUSTAIN_FRAMES) {
+            console.log(`[ImitationGame] ${action.id} detected successfully with ${(avgConf * 100).toFixed(1)}% confidence`);
             concludeAction('correct', avgConf);
             return;
           }
@@ -259,6 +327,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
   // Conclude one action and move forward
   const concludeAction = (status, finalConf) => {
+    phaseRef.current = 'feedback';
     setPhase('feedback');
     
     // If status is 'fail' (timeout), we calculate the best average confidence we had
@@ -302,8 +371,10 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
     // short feedback pause then next action
     setTimeout(() => {
-      setCurrentIndex(i => i + 1);
-      nextPhaseDemo();
+      const nextIndex = currentIndex + 1;
+      setCurrentIndex(nextIndex);
+      console.log(`[ImitationGame] Moving to action ${nextIndex + 1} of ${ACTIONS.length}`);
+      nextPhaseDemo(nextIndex);
     }, 1500);
   };
 
@@ -334,12 +405,37 @@ const ImitationGame = ({ studentId, onComplete }) => {
   };
 
   // Utility helpers
-  const getHands = (hands) => (hands && hands.handLandmarks ? hands.handLandmarks : []);
+  const getHands = (hands) => {
+    // Try both possible property names from MediaPipe
+    if (hands?.landmarks && Array.isArray(hands.landmarks)) {
+      return hands.landmarks;
+    }
+    if (hands?.handLandmarks && Array.isArray(hands.handLandmarks)) {
+      return hands.handLandmarks;
+    }
+    return [];
+  };
 
   // 1) Clap – distance reduction cycles and contact
   const detectClap = (hands) => {
     const hl = getHands(hands);
-    if (hl.length < 2) return { confidence: 0 };
+    
+    // Debug logging to diagnose the issue
+    if (Math.random() < 0.05) {
+      console.log('[ImitationGame] Clap - getHands result:', {
+        handsDetectedLength: hl.length,
+        firstHandLength: hl[0]?.length,
+        handsRawStructure: hands ? Object.keys(hands) : 'null'
+      });
+    }
+    
+    if (hl.length < 2) {
+      // More forgiving: allow higher confidence with 1 hand visible
+      if (hl.length === 1) {
+        return { confidence: 0.4 }; // Higher confidence for 1 hand visible
+      }
+      return { confidence: 0 };
+    }
     
     const l = hl[0][0]; // left wrist
     const r = hl[1][0];
@@ -353,10 +449,20 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const dist = Math.hypot(l.x - r.x, l.y - r.y);
     const relativeDist = dist / (avgHandSize || 0.1);
 
+    // Debug logging occasionally
+    if (Math.random() < 0.1) {
+      console.log('[ImitationGame] Clap detection:', {
+        dist: dist.toFixed(3),
+        relativeDist: relativeDist.toFixed(2),
+        avgHandSize: avgHandSize.toFixed(3)
+      });
+    }
+
     // Clapping is hands coming close together
     let conf = 0;
-    if (relativeDist < 1.5) conf = 0.95;
-    else if (relativeDist < 3.0) conf = 0.5;
+    if (relativeDist < 2.0) conf = 0.95; // More forgiving distance
+    else if (relativeDist < 4.0) conf = 0.6; // Wider range
+    else conf = 0.3; // Higher baseline for 2 hands visible
     
     return { confidence: conf };
   };
@@ -364,10 +470,28 @@ const ImitationGame = ({ studentId, onComplete }) => {
   // 2) Wave – oscillation of the hand
   const detectWave = (hands) => {
     const hl = getHands(hands);
-    if (hl.length < 1) return { confidence: 0 };
+    if (hl.length < 1) {
+      if (Math.random() < 0.05) {
+        console.log('[ImitationGame] Wave: No hands detected');
+      }
+      return { confidence: 0 };
+    }
     
     const wrist = hl[0][0];
     const indexMCP = hl[0][5];
+    
+    // Debug structure
+    if (Math.random() < 0.05) {
+      console.log('[ImitationGame] Wave - hand structure:', {
+        handCount: hl.length,
+        firstHandType: Array.isArray(hl[0]) ? 'array' : typeof hl[0],
+        firstHandLength: hl[0]?.length,
+        wristExists: !!wrist,
+        indexMCPExists: !!indexMCP,
+        wristType: typeof wrist
+      });
+    }
+    
     if (!wrist || !indexMCP) return { confidence: 0 };
 
     const handSize = Math.hypot(wrist.x - indexMCP.x, wrist.y - indexMCP.y);
@@ -386,26 +510,52 @@ const ImitationGame = ({ studentId, onComplete }) => {
     }
     waveDirRef.current.lastX = wrist.x;
 
+    // Debug logging
+    if (Math.random() < 0.1) {
+      console.log('[ImitationGame] Wave detection:', {
+        changes: waveDirRef.current.changes,
+        direction: waveDirRef.current.lastDir,
+        wristX: wrist.x.toFixed(3)
+      });
+    }
+
     // A wave needs multiple direction changes
     const changes = waveDirRef.current.changes;
-    const conf = changes >= 3 ? 0.95 : changes >= 1 ? 0.6 : 0.2;
+    // Much more forgiving - any hand movement counts
+    const conf = changes >= 2 ? 0.95 : changes >= 1 ? 0.7 : (hl.length > 0 ? 0.4 : 0.2);
     return { confidence: conf };
   };
 
   // 3) Smile – elevation above baseline
   const detectSmile = (face) => {
-    const shapes = face?.faceBlendshapes?.[0]?.categories || [];
+    if (!face || !face.faceBlendshapes || face.faceBlendshapes.length === 0) {
+      console.log('[ImitationGame] Smile: No face blendshapes detected', {
+        hasFace: !!face,
+        hasBlendshapes: !!face?.faceBlendshapes,
+        blendshapesLength: face?.faceBlendshapes?.length || 0
+      });
+      return { confidence: 0 };
+    }
+
+    const shapes = face.faceBlendshapes[0].categories || [];
     const left = shapes.find(c => c.categoryName === 'mouthSmileLeft');
     const right = shapes.find(c => c.categoryName === 'mouthSmileRight');
     
-    if (!left || !right) return { confidence: 0 };
+    if (!left || !right) {
+      console.log('[ImitationGame] Smile: No smile categories found in blendshapes');
+      return { confidence: 0 };
+    }
 
     const smileScore = (left.score + right.score) / 2;
 
+    if (Math.random() < 0.1) {
+      console.log('[ImitationGame] Smile detection:', { smileScore: smileScore.toFixed(3) });
+    }
+
     let conf = 0;
-    if (smileScore > 0.4) conf = 0.95;
-    else if (smileScore > 0.15) conf = 0.6;
-    else if (smileScore > 0.05) conf = 0.3;
+    if (smileScore > 0.20) conf = 0.95; // Very forgiving
+    else if (smileScore > 0.10) conf = 0.7;
+    else if (smileScore > 0.03) conf = 0.4; // Show recognition for slight smile
     
     return { confidence: conf };
   };
@@ -413,7 +563,13 @@ const ImitationGame = ({ studentId, onComplete }) => {
   // 4) Raise Hands – wrists above shoulders or near ears
   const detectHandsUp = (pose) => {
     const lms = pose?.landmarks?.[0];
-    if (!lms) return { confidence: 0 };
+    if (!lms) {
+      // Show baseline confidence if pose exists at all
+      if (pose && pose.landmarks && pose.landmarks.length > 0) {
+        return { confidence: 0.1 };
+      }
+      return { confidence: 0 };
+    }
     const leftWrist = lms[15], rightWrist = lms[16], leftShoulder = lms[11], rightShoulder = lms[12];
     const leftEar = lms[7], rightEar = lms[8];
     
@@ -426,12 +582,22 @@ const ImitationGame = ({ studentId, onComplete }) => {
     }
 
     // Wrists should be higher than shoulders (lower Y value)
-    const leftRaised = (leftShoulder && (leftShoulder.y - leftWrist.y) > shoulderDist * 0.2) || (leftEar && (leftEar.y - leftWrist.y) > -0.05);
-    const rightRaised = (rightShoulder && (rightShoulder.y - rightWrist.y) > shoulderDist * 0.2) || (rightEar && (rightEar.y - rightWrist.y) > -0.05);
+    const leftRaised = (leftShoulder && (leftShoulder.y - leftWrist.y) > shoulderDist * 0.15) || (leftEar && (leftEar.y - leftWrist.y) > -0.05); // Lowered threshold
+    const rightRaised = (rightShoulder && (rightShoulder.y - rightWrist.y) > shoulderDist * 0.15) || (rightEar && (rightEar.y - rightWrist.y) > -0.05);
     
+    if (Math.random() < 0.1) {
+      console.log('[ImitationGame] HandsUp detection:', {
+        leftRaised,
+        rightRaised,
+        leftWristY: leftWrist.y.toFixed(2),
+        leftShoulderY: leftShoulder?.y.toFixed(2),
+        shoulderDist: shoulderDist.toFixed(2)
+      });
+    }
+
     let conf = 0;
     if (leftRaised && rightRaised) conf = 0.95;
-    else if (leftRaised || rightRaised) conf = 0.5;
+    else if (leftRaised || rightRaised) conf = 0.6; // Higher partial confidence
     
     return { confidence: conf };
   };
@@ -453,17 +619,17 @@ const ImitationGame = ({ studentId, onComplete }) => {
       const handSize = Math.hypot(wrist.x - indexMCP.x, wrist.y - indexMCP.y);
       const indexLen = Math.hypot(indexTip.x - indexMCP.x, indexTip.y - indexMCP.y);
       
-      const indexExtended = indexLen > handSize * 0.6;
+      const indexExtended = indexLen > handSize * 0.5; // More forgiving threshold
       
       const dx = indexTip.x - wrist.x;
-      const pointingLeft = dx < -handSize * 0.5;
-      const pointingRight = dx > handSize * 0.5;
+      const pointingLeft = dx < -handSize * 0.3; // More forgiving
+      const pointingRight = dx > handSize * 0.3; // More forgiving
       const matchesDir = dir === 'left' ? pointingLeft : pointingRight;
 
       let conf = 0;
       if (indexExtended && matchesDir) conf = 0.95;
-      else if (matchesDir) conf = 0.6;
-      else if (indexExtended) conf = 0.3;
+      else if (matchesDir) conf = 0.7; // Higher partial
+      else if (indexExtended) conf = 0.4; // Higher baseline
 
       if (conf > bestConf) bestConf = conf;
     });
@@ -474,9 +640,14 @@ const ImitationGame = ({ studentId, onComplete }) => {
   // 6) Finger on Lips – index tip near mouth center
   const detectFingerOnLips = (hands, face) => {
     const hl = getHands(hands);
-    const landmarks = face?.faceLandmarks?.[0];
+    // Try both landmarks and faceLandmarks
+    const landmarks = face?.landmarks?.[0] || face?.faceLandmarks?.[0];
     
-    if (!landmarks || hl.length < 1) return { confidence: 0 };
+    if (!landmarks || hl.length < 1) {
+      // Give some baseline if hand detected but no face
+      if (hl.length > 0) return { confidence: 0.2 };
+      return { confidence: 0 };
+    }
 
     const upperLip = landmarks[13];
     const lowerLip = landmarks[14];
@@ -492,8 +663,8 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const handSize = Math.hypot(wrist.x - indexMCP.x, wrist.y - indexMCP.y);
     const dist = Math.hypot(indexTip.x - mouthX, indexTip.y - mouthY);
     
-    const near = dist < handSize * 0.8; 
-    const conf = near ? 0.95 : dist < handSize * 1.5 ? 0.5 : 0;
+    const near = dist < handSize * 1.2; // More forgiving
+    const conf = near ? 0.95 : dist < handSize * 2.0 ? 0.6 : 0.3; // Higher baseline
     return { confidence: conf };
   };
 
@@ -515,12 +686,12 @@ const ImitationGame = ({ studentId, onComplete }) => {
       const handSize = Math.hypot(wrist.x - indexTip.x, wrist.y - indexTip.y);
       const thumbLen = Math.hypot(thumbTip.x - thumbMCP.x, thumbTip.y - thumbMCP.y);
       
-      const thumbExtended = thumbLen > handSize * 0.4;
-      const upward = (wrist.y - thumbTip.y) > handSize * 0.3;
+      const thumbExtended = thumbLen > handSize * 0.35; // More forgiving
+      const upward = (wrist.y - thumbTip.y) > handSize * 0.25; // More forgiving
 
       let conf = 0;
       if (thumbExtended && upward) conf = 0.95;
-      else if (upward) conf = 0.6;
+      else if (upward) conf = 0.7; // Higher partial
       else if (thumbExtended) conf = 0.4;
 
       if (conf > bestConf) bestConf = conf;
@@ -532,7 +703,11 @@ const ImitationGame = ({ studentId, onComplete }) => {
   // 8) Prayer – palms/wrists close
   const detectPrayer = (hands) => {
     const hl = getHands(hands);
-    if (hl.length < 2) return { confidence: 0 };
+    if (hl.length < 2) {
+      // Give partial confidence for having 1 hand in prayer position
+      if (hl.length === 1) return { confidence: 0.3 };
+      return { confidence: 0 };
+    }
     const l = hl[0][0];
     const r = hl[1][0];
     if (!l || !r) return { confidence: 0 };
@@ -542,18 +717,20 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const avgHandSize = (lHandSize + rHandSize) / 2;
 
     const dist = Math.hypot(l.x - r.x, l.y - r.y);
-    const near = dist < avgHandSize * 2.5;
-    const touching = dist < avgHandSize * 1.2;
+    const near = dist < avgHandSize * 3.0; // More forgiving
+    const touching = dist < avgHandSize * 1.5; // More forgiving
     
     let conf = 0;
     if (touching) conf = 0.95;
-    else if (near) conf = 0.5;
+    else if (near) conf = 0.6; // Higher partial
 
     return { confidence: conf };
   };
 
   // Final aggregation and backend payload
   const finalizeResults = () => {
+    console.log('[ImitationGame] Finalizing results with', actionResults.length, 'actions');
+    phaseRef.current = 'final_results';
     setPhase('final_results');
 
     const totalActions = ACTIONS.length;
@@ -604,6 +781,16 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
   const action = ACTIONS[currentIndex];
   const progressText = `Action ${Math.min(currentIndex + 1, ACTIONS.length)} of ${ACTIONS.length}`;
+  
+  // Safety check for out of bounds index during transition to results
+  if (!action && phase !== 'final_results' && phase !== 'idle') {
+    console.log('[ImitationGame] Action out of bounds, showing results');
+    // Trigger finalize if we somehow got here
+    if (actionResults.length > 0) {
+      setTimeout(() => finalizeResults(), 100);
+    }
+    return <div className="imitation-game">Loading results...</div>;
+  }
 
   return (
     <div className="imitation-game">

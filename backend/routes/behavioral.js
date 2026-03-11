@@ -3,6 +3,7 @@ const router = express.Router();
 const { verifyToken, teacherCheck } = require('../middlewares/auth');
 const BehavioralAssessment = require('../models/BehavioralAssessment');
 const Patient = require('../models/patient');
+const trackScreening = require('../utils/trackScreening');
 
 // All routes require teacher authentication
 router.use(verifyToken);
@@ -10,14 +11,14 @@ router.use(verifyToken);
 // Submit assessment results
 router.post('/submit', async (req, res) => {
   try {
-    const { 
-      studentId, 
+    const {
+      studentId,
       sessionId,
       game,
-      assessmentType, 
-      score, 
-      metrics, 
-      indicators, 
+      assessmentType,
+      score,
+      metrics,
+      indicators,
       rawGameData,
       // Eye-Gaze Tracker specific fields
       eyeContactTime,
@@ -59,6 +60,27 @@ router.post('/submit', async (req, res) => {
     });
 
     await assessment.save();
+    
+    // Track behavioral assessment in the central Screening collection
+    // NEW: Use patientId if provided, otherwise fall back to userId
+    const patientId = req.body.patientId || null; // NEW: Accept patientId from request
+    const resultScore = score ? parseFloat(score) / 100 : null; // Normalize score to 0-1
+    
+    trackScreening({
+      patientId: patientId, // NEW
+      userId: teacherId || null,
+      screeningType: 'behavioral', // Changed from 'questionnaire' to 'behavioral'
+      resultScore: resultScore, // NEW
+      resultLabel: resultScore > 0.7 ? 'High Risk' : resultScore > 0.4 ? 'Moderate Risk' : 'Low Risk', // NEW
+      confidenceScore: resultScore, // NEW
+      metrics: {
+        socialInteraction: metrics?.socialInteraction,
+        communication: metrics?.communication,
+        repetitiveBehavior: metrics?.repetitiveBehavior,
+        sensoryResponse: metrics?.sensoryResponse
+      }
+    });
+    
     res.status(201).json(assessment);
   } catch (error) {
     console.error('Error submitting assessment:', error);
@@ -69,8 +91,8 @@ router.post('/submit', async (req, res) => {
 // Get assessments for a specific student
 router.get('/student/:studentId', async (req, res) => {
   try {
-    const assessments = await BehavioralAssessment.find({ 
-      studentId: req.params.studentId 
+    const assessments = await BehavioralAssessment.find({
+      studentId: req.params.studentId
     }).sort({ completedAt: -1 });
     res.json(assessments);
   } catch (error) {
@@ -81,12 +103,12 @@ router.get('/student/:studentId', async (req, res) => {
 // Get assessments for a specific tool type
 router.get('/tool/:toolId', async (req, res) => {
   try {
-    const assessments = await BehavioralAssessment.find({ 
+    const assessments = await BehavioralAssessment.find({
       assessmentType: req.params.toolId,
       teacherId: req.user.id
     })
-    .populate('studentId', 'name')
-    .sort({ completedAt: -1 });
+      .populate('studentId', 'name')
+      .sort({ completedAt: -1 });
     res.json(assessments);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
@@ -115,7 +137,7 @@ router.get('/stats', async (req, res) => {
 
     const totalSessions = assessments.length;
     const activeStudents = new Set(assessments.map(a => a.studentId.toString())).size;
-    
+
     // Calculate average engagement (score as a proxy for engagement across all games)
     const avgScore = assessments.length > 0
       ? assessments.reduce((acc, curr) => acc + curr.score, 0) / assessments.length
@@ -147,9 +169,9 @@ router.get('/analyze/:studentId', async (req, res) => {
     const teacherId = req.user.id;
 
     // Get all assessments for this student
-    const assessments = await BehavioralAssessment.find({ 
+    const assessments = await BehavioralAssessment.find({
       studentId,
-      teacherId 
+      teacherId
     }).sort({ completedAt: -1 });
 
     // Fetch latest Social Attention Session
@@ -161,8 +183,8 @@ router.get('/analyze/:studentId', async (req, res) => {
     }).sort({ endTime: -1 });
 
     if (assessments.length === 0 && !latestSocialAttention) {
-      return res.status(404).json({ 
-        message: 'No assessments found for this student. Please complete at least one assessment game.' 
+      return res.status(404).json({
+        message: 'No assessments found for this student. Please complete at least one assessment game.'
       });
     }
 
@@ -293,8 +315,8 @@ function normalizeGameMetrics(gameData) {
   if (gameData['sound-sensitivity']) {
     const metrics = gameData['sound-sensitivity'].metrics || {};
     // Convert reaction score (0-2) to 0-100 scale for normalization
-    normalized.sensoryReactionLevel = metrics.avgReactionScore !== undefined ? 
-      (metrics.avgReactionScore * 50) : 
+    normalized.sensoryReactionLevel = metrics.avgReactionScore !== undefined ?
+      (metrics.avgReactionScore * 50) :
       (metrics.sensoryResponseTime || 0);
   }
 
@@ -472,7 +494,7 @@ function generateGameWiseAnalysis(gameData, normalizedMetrics) {
     if (assessment) {
       const score = assessment.score || 0;
       let interpretation = '';
-      
+
       if (gameType === 'emotion-match') {
         interpretation = score > 80 ? 'Strong emotional recognition abilities' : score > 50 ? 'Medium emotional recognition' : 'Challenges with emotional recognition';
       } else if (gameType === 'eye-gaze-tracker') {
@@ -524,7 +546,7 @@ function generateProgressTracking(assessments, gameData) {
 
   // Group by assessment type and compare latest vs previous
   const gameTypes = ['emotion-match', 'eye-gaze-tracker', 'social-attention', 'imitation', 'sound-sensitivity', 'pattern-fixation', 'story-understanding', 'turn-taking'];
-  
+
   gameTypes.forEach(type => {
     const typeAssessments = assessments.filter(a => a.assessmentType === type).sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
     if (typeAssessments.length > 1) {
@@ -532,7 +554,7 @@ function generateProgressTracking(assessments, gameData) {
       const previous = typeAssessments[1].score || 0;
       const change = latest - previous;
       const trend = change > 5 ? 'Improving' : change < -5 ? 'Declining' : 'Stable';
-      
+
       progress.trends.push({
         gameType: type,
         gameName: type.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),

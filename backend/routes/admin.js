@@ -45,13 +45,41 @@ router.get('/metrics', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching admin metrics:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to fetch admin metrics', 
-      details: error.message 
+      error: 'Failed to fetch admin metrics',
+      details: error.message
     });
   }
 });
+
+// GET /api/admin/user-breakdown - Live user role counts for pie chart
+router.get('/user-breakdown', async (req, res) => {
+  try {
+    const roles = ['parent', 'therapist', 'teacher', 'researcher'];
+    const counts = await Promise.all(
+      roles.map(role =>
+        User.countDocuments({ role, isActive: true, status: { $ne: 'rejected' } })
+      )
+    );
+    const pendingCount = await User.countDocuments({ status: 'pending' });
+
+    res.json({
+      success: true,
+      data: [
+        { name: 'Parents', value: counts[0] },
+        { name: 'Therapists', value: counts[1] },
+        { name: 'Teachers', value: counts[2] },
+        { name: 'Researchers', value: counts[3] },
+        { name: 'Pending', value: pendingCount },
+      ].filter(d => d.value > 0) // Only show roles that exist
+    });
+  } catch (error) {
+    console.error('Error fetching user breakdown:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch user breakdown' });
+  }
+});
+
 
 // Legacy endpoint for backward compatibility
 router.get('/stats', async (req, res) => {
@@ -91,37 +119,43 @@ router.get('/stats', async (req, res) => {
   }
 });
 
-// GET /api/admin/screening-trends - Month-wise screening trends (August to January)
+// GET /api/admin/screening-trends - Month-wise screening trends for the last 6 months
 router.get('/screening-trends', async (req, res) => {
   try {
     const currentYear = new Date().getFullYear();
-    
-    // Define month ranges (August to January)
-    const monthRanges = [
-      { month: 'August', start: new Date(currentYear, 7, 1), end: new Date(currentYear, 8, 1) },
-      { month: 'September', start: new Date(currentYear, 8, 1), end: new Date(currentYear, 9, 1) },
-      { month: 'October', start: new Date(currentYear, 9, 1), end: new Date(currentYear, 10, 1) },
-      { month: 'November', start: new Date(currentYear, 10, 1), end: new Date(currentYear, 11, 1) },
-      { month: 'December', start: new Date(currentYear, 11, 1), end: new Date(currentYear + 1, 0, 1) },
-      { month: 'January', start: new Date(currentYear + 1, 0, 1), end: new Date(currentYear + 1, 1, 1) }
-    ];
+    const currentMonth = new Date().getMonth();
+
+    // Define month ranges dynamically for the last 6 months
+    const monthRanges = [];
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+    for (let i = 5; i >= 0; i--) {
+      const start = new Date(currentYear, currentMonth - i, 1);
+      const end = new Date(currentYear, currentMonth - i + 1, 1);
+      monthRanges.push({
+        month: monthNames[start.getMonth()],
+        year: start.getFullYear(),
+        start,
+        end
+      });
+    }
+
+    const startDate = monthRanges[0].start;
+    const endDate = monthRanges[5].end;
 
     // Use MongoDB aggregation for efficient counting
-    const augustFirst = new Date(currentYear, 7, 1);
-    const februaryFirst = new Date(currentYear + 1, 1, 1);
-
     const results = await Screening.aggregate([
       {
         $match: {
           createdAt: {
-            $gte: augustFirst,
-            $lt: februaryFirst
+            $gte: startDate,
+            $lt: endDate
           }
         }
       },
       {
         $group: {
-          _id: { 
+          _id: {
             year: { $year: '$createdAt' },
             month: { $month: '$createdAt' }
           },
@@ -142,10 +176,10 @@ router.get('/screening-trends', async (req, res) => {
 
     // Build the response with proper labels
     const trendsData = monthRanges.map(range => {
-      const year = range.start.getFullYear();
+      const year = range.year;
       const month = range.start.getMonth() + 1;
       const key = `${year}-${month}`;
-      
+
       return {
         month: range.month,
         screenings: countsMap[key] || 0
@@ -158,10 +192,10 @@ router.get('/screening-trends', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching screening trends:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to fetch screening trends', 
-      details: error.message 
+      error: 'Failed to fetch screening trends',
+      details: error.message
     });
   }
 });
@@ -436,4 +470,60 @@ router.put('/children/:childId/unassign-therapist', verifyToken, adminCheck, asy
   }
 });
 
+// GET /api/admin/search?q=<query> - Global admin search across users, children, screenings
+router.get('/search', verifyToken, adminCheck, async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.trim().length === 0) {
+      return res.json({ success: true, data: { users: [], children: [], screenings: [] } });
+    }
+
+    const regex = new RegExp(q.trim(), 'i');
+
+    const [users, children, screenings] = await Promise.all([
+      User.find({
+        $or: [
+          { username: regex },
+          { email: regex },
+          { firstName: regex },
+          { lastName: regex },
+          { role: regex }
+        ]
+      })
+        .select('_id username email role status isActive firstName lastName')
+        .limit(6),
+
+      Patient.find({
+        $or: [
+          { name: regex },
+          { childName: regex },
+          { firstName: regex },
+          { lastName: regex }
+        ]
+      })
+        .select('_id name childName firstName lastName age gender')
+        .limit(6),
+
+      Screening.find({
+        $or: [
+          { screeningType: regex },
+          { result: regex }
+        ]
+      })
+        .select('_id screeningType result createdAt userId childId')
+        .sort({ createdAt: -1 })
+        .limit(6)
+    ]);
+
+    res.json({
+      success: true,
+      data: { users, children, screenings }
+    });
+  } catch (error) {
+    console.error('Error in admin search:', error);
+    res.status(500).json({ success: false, error: 'Search failed', details: error.message });
+  }
+});
+
 module.exports = router;
+

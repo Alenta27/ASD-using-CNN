@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const mongoose = require('mongoose');
+const trackScreening = require('./utils/trackScreening');
 
 const http = require('http');
 const { Server } = require('socket.io');
@@ -23,7 +24,7 @@ app.set('io', io);
 
 io.on('connection', (socket) => {
   console.log('🔌 Client connected to socket:', socket.id);
-  
+
   socket.on('join-session', (sessionId) => {
     socket.join(sessionId);
     console.log(`👤 Client joined session room: ${sessionId}`);
@@ -57,8 +58,8 @@ if (!fs.existsSync(credentialsDir)) fs.mkdirSync(credentialsDir, { recursive: tr
 
 // Serve static files - CRITICAL for stimulus videos and guest session images
 app.use('/credentials', express.static(credentialsDir));
-app.use('/uploads', express.static(uploadsDir)); 
-app.use('/uploads/gaze', express.static(gazeUploadsDir)); 
+app.use('/uploads', express.static(uploadsDir));
+app.use('/uploads/gaze', express.static(gazeUploadsDir));
 app.use('/videos', express.static(path.join(__dirname, 'public/videos')));
 
 console.log('📁 Serving uploads from:', uploadsDir);
@@ -164,6 +165,14 @@ try {
   console.error('Subscription Routes Error:', e.message);
 }
 
+// ✅ Patient Management Routes (NEW - Multimodal System)
+try {
+  app.use('/api/patients', require('./routes/patients'));
+  console.log('✅ Patient Management Routes Registered');
+} catch (e) {
+  console.error('Patient Routes Error:', e.message);
+}
+
 // ✅ MRI Scan Model: accept file upload and return stub JSON
 const multer = require('multer');
 
@@ -180,11 +189,26 @@ app.post('/api/predict-mri', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    const patientId = req.body.patientId || null; // NEW: Accept patientId
+
     // TODO: integrate real MRI prediction pipeline. For now, return a stub prediction
     const diagnosis = Math.random() < 0.5 ? 'ASD' : 'Control';
     const confidence = Number((0.6 + Math.random() * 0.35).toFixed(2));
     const asd_probability = diagnosis === 'ASD' ? confidence : Number((1 - confidence).toFixed(2));
     const control_probability = Number((1 - asd_probability).toFixed(2));
+
+    // Track MRI screening in central Screening collection
+    // NEW: Include patientId and enhanced tracking fields
+    trackScreening({
+      patientId: patientId, // NEW
+      userId: req.user?.id || null,
+      screeningType: 'mri',
+      resultScore: asd_probability, // NEW
+      resultLabel: diagnosis, // NEW
+      confidenceScore: confidence, // NEW
+      result: diagnosis === 'ASD' ? 'high_risk' : 'low_risk', // Legacy
+      fileUrl: `/uploads/${req.file.filename}`
+    });
 
     return res.status(200).json({
       diagnosis,
@@ -245,11 +269,11 @@ app.post('/api/predict-gaze-snapshot', upload.single('file'), async (req, res) =
 
       pythonProcess.on('close', (code) => {
         clearTimeout(timeout);
-        
+
         console.log('📊 Python process exit code:', code);
         console.log('📊 Python stdout length:', output.length);
         console.log('📊 Python stderr length:', errorOutput.length);
-        
+
         if (errorOutput) {
           console.error('Python stderr:', errorOutput);
         }
@@ -324,7 +348,7 @@ app.post('/api/predict-gaze-snapshot', upload.single('file'), async (req, res) =
 });
 
 // ✅ Start Server + Connect DB
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 async function start() {
   const mongoUri = process.env.MONGO_URI;
@@ -334,7 +358,7 @@ async function start() {
     try {
       await mongoose.connect(mongoUri);
       console.log('✅ MongoDB Connected');
-      
+
       // 🧹 DEV MODE: Clear all subscriptions on server start
       // Set CLEAR_SUBSCRIPTIONS=true in .env to enable
       if (process.env.CLEAR_SUBSCRIPTIONS === 'true') {
@@ -345,9 +369,9 @@ async function start() {
       console.error('❌ MongoDB Connection Failed:', err.message);
     }
   }
-app.get('/', (req, res) => {
-  res.send('✅ ASD Backend Server is Running');
-});
+  app.get('/', (req, res) => {
+    res.send('✅ ASD Backend Server is Running');
+  });
 
   // Fallback JSON for unknown /api routes to avoid HTML responses
   app.use('/api', (req, res) => {

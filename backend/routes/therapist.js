@@ -455,6 +455,213 @@ router.put('/calendar/availability', async (req, res) => {
   }
 });
 
+// ============== WEEKLY SCHEDULE ENDPOINT ==============
+// Get weekly schedule with real appointment data
+router.get('/schedule', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    // Default to current week if no dates provided
+    let start, end;
+    if (startDate && endDate) {
+      start = new Date(startDate);
+      end = new Date(endDate);
+    } else {
+      // Get current week (Monday to Friday)
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Sunday adjustment
+      
+      start = new Date(now);
+      start.setDate(now.getDate() + diff);
+      start.setHours(0, 0, 0, 0);
+      
+      end = new Date(start);
+      end.setDate(start.getDate() + 4); // Monday to Friday
+      end.setHours(23, 59, 59, 999);
+    }
+    
+    // Fetch appointments for this week
+    const appointments = await Appointment.find({
+      therapistId: req.user.id,
+      appointmentDate: {
+        $gte: start,
+        $lte: end
+      }
+    })
+    .populate('childId', 'name')
+    .populate('parentId', 'username email')
+    .sort({ appointmentDate: 1, appointmentTime: 1 });
+    
+    // Fetch slots for this week
+    const slots = await Slot.find({
+      therapistId: req.user.id,
+      date: {
+        $gte: start,
+        $lte: end
+      },
+      isActive: true
+    }).sort({ date: 1 });
+    
+    // Format the response
+    const formattedAppointments = appointments.map(apt => {
+      const dayOfWeek = apt.appointmentDate.toLocaleDateString('en-US', { weekday: 'long' });
+      return {
+        id: apt._id,
+        day: dayOfWeek,
+        date: apt.appointmentDate,
+        time: apt.appointmentTime,
+        patient: apt.childId?.name || 'Unknown Patient',
+        patientId: apt.childId?._id,
+        parentName: apt.parentId?.username || apt.parentId?.email || 'Unknown Parent',
+        status: apt.status,
+        reason: apt.reason,
+        notes: apt.notes,
+        paymentStatus: apt.paymentStatus
+      };
+    });
+    
+    // Format slots with generated time slots
+    const formattedSlots = slots.map(slot => {
+      const dayOfWeek = slot.date.toLocaleDateString('en-US', { weekday: 'long' });
+      const timeSlots = generateTimeSlots(
+        slot.startTime,
+        slot.endTime,
+        slot.intervalMinutes,
+        slot.breakTimeMinutes
+      );
+      
+      return {
+        id: slot._id,
+        day: dayOfWeek,
+        date: slot.date,
+        timeSlots: timeSlots,
+        mode: slot.mode,
+        hospitalClinicName: slot.hospitalClinicName
+      };
+    });
+    
+    res.json({
+      weekStart: start,
+      weekEnd: end,
+      appointments: formattedAppointments,
+      slots: formattedSlots
+    });
+  } catch (error) {
+    console.error('Error fetching schedule:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Book a slot - Create appointment for available slot
+router.post('/book-slot', async (req, res) => {
+  try {
+    const { patientId, day, time, date, reason } = req.body;
+    const therapistId = req.user.id;
+
+    // Validate required fields
+    if (!patientId || !day || !time || !date) {
+      return res.status(400).json({ 
+        message: 'Missing required fields: patientId, day, time, and date are required' 
+      });
+    }
+
+    // Verify the patient exists and belongs to this therapist
+    const patient = await Patient.findOne({
+      _id: patientId,
+      therapist_user_id: therapistId
+    });
+
+    if (!patient) {
+      return res.status(404).json({ 
+        message: 'Patient not found or not assigned to you' 
+      });
+    }
+
+    // Parse the date
+    const appointmentDate = new Date(date);
+    appointmentDate.setHours(0, 0, 0, 0);
+
+    // Check if slot is already booked (prevent double booking)
+    const existingAppointment = await Appointment.findOne({
+      therapistId: therapistId,
+      appointmentDate: appointmentDate,
+      appointmentTime: time,
+      status: { $nin: ['cancelled'] } // Ignore cancelled appointments
+    });
+
+    if (existingAppointment) {
+      return res.status(409).json({ 
+        message: 'This slot is already booked. Please choose another time.' 
+      });
+    }
+
+    // Get parent ID from patient
+    const parentId = patient.parent_user_id;
+    
+    if (!parentId) {
+      // If patient doesn't have a parent, try to find any parent user
+      // In a real scenario, you might want to prompt for parent selection
+      const parentUser = await User.findOne({ role: 'parent' }).limit(1);
+      
+      if (!parentUser) {
+        return res.status(400).json({ 
+          message: 'No parent user found. Please ensure patient has an associated parent or create a parent account first.' 
+        });
+      }
+      
+      // Use the first available parent as a fallback
+      // In production, you'd want to associate the patient with a specific parent first
+      console.log(`⚠️ Warning: Patient ${patient.name} has no parent. Using fallback parent ${parentUser.username || parentUser.email}`);
+    }
+
+    // Create the appointment with either actual parent or fallback
+    const appointmentParentId = parentId || (await User.findOne({ role: 'parent' }).limit(1))._id;
+    
+    const newAppointment = new Appointment({
+      parentId: appointmentParentId,
+      childId: patientId,
+      therapistId: therapistId,
+      appointmentDate: appointmentDate,
+      appointmentTime: time,
+      reason: reason || 'Scheduled appointment',
+      status: 'pending',
+      paymentStatus: 'pending',
+      appointmentFee: 0
+    });
+
+    await newAppointment.save();
+
+    // Populate the data for response
+    await newAppointment.populate('childId', 'name');
+    await newAppointment.populate('parentId', 'username email');
+
+    const dayOfWeek = appointmentDate.toLocaleDateString('en-US', { weekday: 'long' });
+
+    res.status(201).json({
+      message: 'Appointment booked successfully',
+      appointment: {
+        id: newAppointment._id,
+        day: dayOfWeek,
+        date: appointmentDate,
+        time: newAppointment.appointmentTime,
+        patient: newAppointment.childId?.name,
+        patientId: newAppointment.childId?._id,
+        parentName: newAppointment.parentId?.username || newAppointment.parentId?.email,
+        status: newAppointment.status,
+        reason: newAppointment.reason,
+        paymentStatus: newAppointment.paymentStatus
+      }
+    });
+  } catch (error) {
+    console.error('Error booking slot:', error);
+    res.status(500).json({ 
+      message: 'Server error while booking appointment', 
+      error: error.message 
+    });
+  }
+});
+
 // Get gaze session details
 router.get('/sessions/:sessionId', async (req, res) => {
   try {
@@ -1093,6 +1300,7 @@ router.get('/behavioral-metrics/:patientId', requireResourceAccess('children'), 
       return res.status(403).json({ message: 'Access denied. Patient not found.' });
     }
 
+    // First try to get from database
     let dreamFeature;
     
     if (sessionId) {
@@ -1103,18 +1311,105 @@ router.get('/behavioral-metrics/:patientId', requireResourceAccess('children'), 
       }).sort({ processedAt: -1 });
     }
 
+    // If no data in DB, try to extract from DREAM dataset using Python
     if (!dreamFeature) {
-      return res.json({
-        sessionDate: new Date().toISOString().split('T')[0],
-        averageJointVelocity: 0,
-        headGazeVariance: 0,
-        totalDisplacementRatio: 0,
-        adosCommunicationScore: 0,
-        adosTotalScore: 0,
-        message: 'No DREAM dataset session available for this patient'
+      const { spawn } = require('child_process');
+      const path = require('path');
+      
+      // Map patient_id to DREAM user ID (for testing, use random IDs from 10-80)
+      const dreamUserId = String(patient.patient_id || Math.floor(Math.random() * 70) + 10);
+      
+      // Use virtual environment Python if available
+      const pythonPath = process.env.PYTHON_PATH || path.join(__dirname, '..', '..', '.venv', 'Scripts', 'python.exe');
+      const scriptPath = path.join(__dirname, '..', 'dream_worker.py');
+      
+      console.log(`[DREAM] Extracting features for patient ${patientId}, DREAM User: ${dreamUserId}`);
+      console.log(`[DREAM] Python: ${pythonPath}`);
+      console.log(`[DREAM] Script: ${scriptPath}`);
+      
+      const pythonProcess = spawn(pythonPath, [scriptPath, dreamUserId]);
+      
+      let stdoutData = '';
+      let stderrData = '';
+      
+      pythonProcess.stdout.on('data', (data) => {
+        stdoutData += data.toString();
       });
+      
+      pythonProcess.stderr.on('data', (data) => {
+        stderrData += data.toString();
+      });
+      
+      pythonProcess.on('close', (code) => {
+        console.log(`[DREAM] Python process exited with code: ${code}`);
+        console.log(`[DREAM] stdout length: ${stdoutData.length}`);
+        if (stderrData) console.log(`[DREAM] stderr: ${stderrData}`);
+        
+        if (code !== 0 || !stdoutData) {
+          console.error('[DREAM] Python worker error:', stderrData);
+          return res.json({
+            sessionDate: new Date().toISOString().split('T')[0],
+            averageJointVelocity: 0,
+            headGazeVariance: 0,
+            totalDisplacementRatio: 0,
+            adosCommunicationScore: 0,
+            adosTotalScore: 0,
+            message: 'No DREAM dataset available for this patient'
+          });
+        }
+        
+        try {
+          console.log(`[DREAM] Parsing JSON output...`);
+          const result = JSON.parse(stdoutData);
+          
+          if (result.error) {
+            console.error('[DREAM] Feature extraction error:', result.error);
+            return res.json({
+              sessionDate: new Date().toISOString().split('T')[0],
+              averageJointVelocity: 0,
+              headGazeVariance: 0,
+              totalDisplacementRatio: 0,
+              adosCommunicationScore: 0,
+              adosTotalScore: 0,
+              message: result.error
+            });
+          }
+          
+          console.log(`[DREAM] ✅ Successfully extracted features for ${result.participantId}`);
+          
+          // Return extracted features
+          return res.json({
+            sessionDate: result.sessionDate || new Date().toISOString().split('T')[0],
+            averageJointVelocity: result.averageJointVelocity || 0,
+            headGazeVariance: result.headGazeVariance || 0,
+            totalDisplacementRatio: result.totalDisplacementRatio || 0,
+            eyeGazeConsistency: result.eyeGazeConsistency || 0,
+            adosCommunicationScore: result.adosCommunicationScore || 0,
+            adosTotalScore: result.adosTotalScore || 0,
+            ageMonths: result.ageMonths || 0,
+            therapyCondition: result.therapyCondition || 'Unknown',
+            participantId: result.participantId,
+            source: 'dream_dataset'
+          });
+        } catch (parseError) {
+          console.error('Error parsing Python output:', parseError);
+          console.error('Raw output:', stdoutData);
+          return res.json({
+            sessionDate: new Date().toISOString().split('T')[0],
+            averageJointVelocity: 0,
+            headGazeVariance: 0,
+            totalDisplacementRatio: 0,
+            adosCommunicationScore: 0,
+            adosTotalScore: 0,
+            message: 'Error processing DREAM data'
+          });
+        }
+      });
+      
+      return; // Don't send response yet, wait for Python process
     }
 
+    // Return database data if available
     res.json({
       sessionDate: dreamFeature.sessionDate || dreamFeature.processedAt,
       averageJointVelocity: dreamFeature.averageJointVelocity || 0,
@@ -1125,7 +1420,8 @@ router.get('/behavioral-metrics/:patientId', requireResourceAccess('children'), 
       adosTotalScore: dreamFeature.adosTotalScore || 0,
       ageMonths: dreamFeature.ageMonths || 0,
       therapyCondition: dreamFeature.therapyCondition || 'Unknown',
-      participantId: dreamFeature.participantId
+      participantId: dreamFeature.participantId,
+      source: 'database'
     });
   } catch (error) {
     console.error('Error fetching behavioral metrics:', error);

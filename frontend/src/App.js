@@ -51,10 +51,13 @@ import ParentAppointmentsPage from './pages/ParentAppointmentsPage';
 import SocialResponseGame from './pages/SocialResponseGame';
 import ParentScreeningResultsPage from './pages/ParentScreeningResultsPage';
 import ParentProgressReportsPage from './pages/ParentProgressReportsPage';
+import AttentionAnalysisPage from './pages/AttentionAnalysisPage';
 import ParentCareTeamPage from './pages/ParentCareTeamPage';
 import ParentResourcesPage from './pages/ParentResourcesPage';
 import ParentSettingsPage from './pages/ParentSettingsPage';
 import PaymentPage from './pages/PaymentPage';
+import FacialScreeningPage from './pages/FacialScreeningPage';
+import ScreeningCenterPage from './pages/ScreeningCenterPage';
 import { cleanupExpiredSubscription } from './utils/subscriptionUtils';
 
 function App() {
@@ -79,6 +82,8 @@ function App() {
           <Route path="/speech-therapy" element={<SpeechTherapyChildPage />} />
           <Route path="/mri-screening" element={<MRIScreeningPage />} />
           <Route path="/live-gaze-analysis" element={<GazeSnapshotCapture />} />
+          <Route path="/facial-screening" element={<ScreeningPage />} />
+          <Route path="/screening-center" element={<ScreeningCenterPage />} />
           <Route path="/questionnaire" element={<QuestionnairePage />} />
           <Route path="/how-it-works" element={<HowItWorksPage />} />
           <Route path="/learn-more" element={<LearnMorePage />} />
@@ -96,6 +101,7 @@ function App() {
           <Route path="/parent/payment" element={<PaymentPage />} />
           <Route path="/parent/screening-results" element={<ParentScreeningResultsPage />} />
           <Route path="/parent/progress-reports" element={<ParentProgressReportsPage />} />
+          <Route path="/parent/attention-analysis" element={<AttentionAnalysisPage />} />
           <Route path="/parent/care-team" element={<ParentCareTeamPage />} />
           <Route path="/parent/resources" element={<ParentResourcesPage />} />
           <Route path="/parent/settings" element={<ParentSettingsPage />} />
@@ -136,6 +142,7 @@ function App() {
           <Route path="/research/trends" element={<ResearchDashboard />} />
           <Route path="/research/gender" element={<ResearchDashboard />} />
           <Route path="/research/regional" element={<ResearchDashboard />} />
+          <Route path="/research/dream" element={<ResearchDashboard />} />
           <Route path="/research/articles" element={<ResearchDashboard />} />
           <Route path="/research/models" element={<ResearchDashboard />} />
           <Route path="/research/model-performance" element={<ResearchDashboard />} />

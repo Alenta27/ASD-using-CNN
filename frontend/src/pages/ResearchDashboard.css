@@ -783,3 +783,34 @@
     font-size: 20px;
   }
 }
+
+/* DREAM Dataset Analysis Section */
+.dream-section {
+  margin-top: 50px;
+  padding-top: 40px;
+  border-top: 2px solid #e2e8f0;
+}
+
+.dream-section .section-header {
+  margin-bottom: 25px;
+}
+
+.dream-section .section-header h2 {
+  margin: 0 0 10px 0;
+  font-size: 26px;
+  font-weight: 700;
+  color: #2d3748;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.dream-section .section-description {
+  margin: 0;
+  font-size: 15px;
+  color: #718096;
+  line-height: 1.6;
+  max-width: 800px;
+}
+

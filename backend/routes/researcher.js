@@ -610,4 +610,92 @@ router.get('/educational-content', async (req, res) => {
   }
 });
 
+// Get DREAM Dataset Analysis
+// Endpoint: GET /api/research/dream-analysis?subjectId=37
+router.get('/dream-analysis', requireResourceAccess('analytics'), async (req, res) => {
+  try {
+    const { subjectId } = req.query;
+    
+    if (!subjectId) {
+      return res.status(400).json({ 
+        message: 'Subject ID is required',
+        example: '/api/research/dream-analysis?subjectId=37'
+      });
+    }
+
+    // Mock DREAM dataset with realistic ASD behavioral metrics
+    const dreamDataset = {
+      '10': {
+        joint_velocity: 0.68,
+        gaze_variance: 0.048,
+        communication_score: 9,
+        ados_score: 12,
+        displacement_ratio: 0.49,
+        participant_id: '10',
+        age_months: 45,
+        condition: 'ASD',
+        session_id: 'S001'
+      },
+      '37': {
+        joint_velocity: 0.73,
+        gaze_variance: 0.042,
+        communication_score: 8,
+        ados_score: 10,
+        displacement_ratio: 0.52,
+        participant_id: '37',
+        age_months: 47,
+        condition: 'ASD',
+        session_id: 'S002'
+      },
+      '42': {
+        joint_velocity: 0.45,
+        gaze_variance: 0.025,
+        communication_score: 3,
+        ados_score: 4,
+        displacement_ratio: 0.68,
+        participant_id: '42',
+        age_months: 52,
+        condition: 'TD',
+        session_id: 'S003'
+      },
+      '55': {
+        joint_velocity: 0.81,
+        gaze_variance: 0.056,
+        communication_score: 11,
+        ados_score: 16,
+        displacement_ratio: 0.43,
+        participant_id: '55',
+        age_months: 38,
+        condition: 'ASD',
+        session_id: 'S004'
+      },
+      '68': {
+        joint_velocity: 0.42,
+        gaze_variance: 0.022,
+        communication_score: 2,
+        ados_score: 3,
+        displacement_ratio: 0.72,
+        participant_id: '68',
+        age_months: 41,
+        condition: 'TD',
+        session_id: 'S005'
+      }
+    };
+
+    const subjectData = dreamDataset[subjectId];
+    
+    if (!subjectData) {
+      return res.status(404).json({ 
+        message: `Subject ${subjectId} not found in DREAM dataset`,
+        available_subjects: Object.keys(dreamDataset)
+      });
+    }
+
+    res.json(subjectData);
+  } catch (error) {
+    console.error('❌ Error fetching DREAM analysis:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;
