@@ -9,6 +9,9 @@ const Slot = require('../models/slot');
 const Appointment = require('../models/appointment');
 const GazeSession = require('../models/GazeSession');
 const DREAMFeatures = require('../models/dreamFeatures');
+const Screening = require('../models/screening');
+const BehavioralAssessment = require('../models/BehavioralAssessment');
+const CombinedASDReport = require('../models/CombinedASDReport');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -1737,6 +1740,453 @@ router.get('/guest-sessions', async (req, res) => {
   } catch (error) {
     console.error('❌ Error fetching guest sessions:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ============================================================================
+// MULTIMODAL ASD ASSESSMENT ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/therapist/combined-asd-report?patient_id=:patientId
+ * 
+ * Fetches or generates a combined multimodal ASD assessment report for a patient
+ * Implements weighted decision fusion algorithm across all screening modules
+ */
+router.get('/combined-asd-report', async (req, res) => {
+  try {
+    const { patient_id } = req.query;
+
+    if (!patient_id) {
+      return res.status(400).json({ 
+        message: 'Patient ID is required',
+        success: false 
+      });
+    }
+
+    // Verify patient belongs to this therapist
+    const patient = await Patient.findOne({ 
+      _id: patient_id, 
+      therapist_user_id: req.user.id 
+    });
+    
+    if (!patient) {
+      return res.status(404).json({ 
+        message: 'Patient not found or access denied',
+        success: false 
+      });
+    }
+
+    // Fetch all screening results for this patient
+    const screeningResults = {
+      facial: null,
+      mri: null,
+      gaze: null,
+      behavior: null,
+      questionnaire: null
+    };
+
+    // 1. Fetch Facial Screening Result (CNN)
+    const facialScreening = await Screening.findOne({
+      patientId: patient_id,
+      screeningType: 'facial',
+      status: 'completed'
+    }).sort({ createdAt: -1 });
+
+    if (facialScreening && facialScreening.resultScore !== null && facialScreening.resultScore !== undefined) {
+      screeningResults.facial = {
+        score: facialScreening.resultScore,
+        label: facialScreening.resultLabel,
+        confidence: facialScreening.confidenceScore,
+        screeningId: facialScreening._id,
+        date: facialScreening.createdAt
+      };
+    }
+
+    // 2. Fetch MRI Screening Result (SVM)
+    const mriScreening = await Screening.findOne({
+      patientId: patient_id,
+      screeningType: 'mri',
+      status: 'completed'
+    }).sort({ createdAt: -1 });
+
+    if (mriScreening && mriScreening.resultScore !== null && mriScreening.resultScore !== undefined) {
+      screeningResults.mri = {
+        score: mriScreening.resultScore,
+        label: mriScreening.resultLabel,
+        confidence: mriScreening.confidenceScore,
+        screeningId: mriScreening._id,
+        date: mriScreening.createdAt
+      };
+    }
+
+    // 3. Fetch Live Gaze Analysis Result
+    const gazeSession = await GazeSession.findOne({
+      patientId: patient_id,
+      isGuest: false,
+      status: 'completed'
+    }).sort({ createdAt: -1 });
+
+    if (gazeSession && gazeSession.result) {
+      // Calculate gaze score from gaze session result
+      let gazeScore = 0.5; // default moderate risk
+      
+      if (gazeSession.result.riskLevel === 'High' || gazeSession.result.riskLevel === 'high_risk') {
+        gazeScore = 0.75;
+      } else if (gazeSession.result.riskLevel === 'Moderate' || gazeSession.result.riskLevel === 'medium_risk') {
+        gazeScore = 0.55;
+      } else if (gazeSession.result.riskLevel === 'Low' || gazeSession.result.riskLevel === 'low_risk') {
+        gazeScore = 0.25;
+      }
+      
+      // If there's a numeric score available, use it directly
+      if (gazeSession.result.asdScore !== null && gazeSession.result.asdScore !== undefined) {
+        gazeScore = gazeSession.result.asdScore;
+      }
+
+      screeningResults.gaze = {
+        score: gazeScore,
+        label: gazeSession.result.riskLevel,
+        confidence: gazeSession.result.confidence || 0.8,
+        sessionId: gazeSession._id,
+        date: gazeSession.createdAt
+      };
+    }
+
+    // 4. Fetch Behavioral Assessment Result (Teacher Dashboard)
+    const behavioralAssessment = await BehavioralAssessment.findOne({
+      studentId: patient_id
+    }).sort({ createdAt: -1 });
+
+    if (behavioralAssessment && behavioralAssessment.score !== null && behavioralAssessment.score !== undefined) {
+      // Normalize behavioral score to 0-1 range (assuming original score is 0-100)
+      let normalizedScore = behavioralAssessment.score;
+      if (normalizedScore > 1) {
+        normalizedScore = normalizedScore / 100;
+      }
+
+      screeningResults.behavior = {
+        score: normalizedScore,
+        label: normalizedScore > 0.7 ? 'High Risk' : normalizedScore > 0.4 ? 'Moderate Risk' : 'Low Risk',
+        confidence: 0.85,
+        assessmentId: behavioralAssessment._id,
+        date: behavioralAssessment.createdAt
+      };
+    }
+
+    // 5. Fetch Questionnaire Screening Result
+    const questionnaireScreening = await Screening.findOne({
+      patientId: patient_id,
+      screeningType: 'questionnaire',
+      status: 'completed'
+    }).sort({ createdAt: -1 });
+
+    if (questionnaireScreening && questionnaireScreening.resultScore !== null && questionnaireScreening.resultScore !== undefined) {
+      screeningResults.questionnaire = {
+        score: questionnaireScreening.resultScore,
+        label: questionnaireScreening.resultLabel,
+        confidence: questionnaireScreening.confidenceScore,
+        screeningId: questionnaireScreening._id,
+        date: questionnaireScreening.createdAt
+      };
+    }
+
+    // Calculate the combined score using weighted decision fusion
+    const weights = {
+      facial: 0.25,
+      mri: 0.25,
+      gaze: 0.20,
+      behavior: 0.15,
+      questionnaire: 0.15
+    };
+
+    let finalScore = 0;
+    let totalWeight = 0;
+    const completedModules = [];
+    const screeningReferences = {};
+
+    // Weighted sum calculation
+    if (screeningResults.facial) {
+      finalScore += screeningResults.facial.score * weights.facial;
+      totalWeight += weights.facial;
+      completedModules.push('Facial Screening');
+      screeningReferences.facialScreeningId = screeningResults.facial.screeningId;
+    }
+
+    if (screeningResults.mri) {
+      finalScore += screeningResults.mri.score * weights.mri;
+      totalWeight += weights.mri;
+      completedModules.push('MRI Screening');
+      screeningReferences.mriScreeningId = screeningResults.mri.screeningId;
+    }
+
+    if (screeningResults.gaze) {
+      finalScore += screeningResults.gaze.score * weights.gaze;
+      totalWeight += weights.gaze;
+      completedModules.push('Live Gaze Analysis');
+      screeningReferences.gazeSessionId = screeningResults.gaze.sessionId;
+    }
+
+    if (screeningResults.behavior) {
+      finalScore += screeningResults.behavior.score * weights.behavior;
+      totalWeight += weights.behavior;
+      completedModules.push('Behavioral Assessment');
+      screeningReferences.behavioralAssessmentId = screeningResults.behavior.assessmentId;
+    }
+
+    if (screeningResults.questionnaire) {
+      finalScore += screeningResults.questionnaire.score * weights.questionnaire;
+      totalWeight += weights.questionnaire;
+      completedModules.push('Questionnaire Screening');
+      screeningReferences.questionnaireScreeningId = screeningResults.questionnaire.screeningId;
+    }
+
+    // Normalize the final score if not all modules are available
+    if (totalWeight > 0) {
+      finalScore = finalScore / totalWeight;
+    } else {
+      return res.status(400).json({
+        message: 'No screening results available for this patient',
+        success: false,
+        completedModules: []
+      });
+    }
+
+    // Determine risk level based on final score
+    let riskLevel = 'Low';
+    if (finalScore >= 0.70) {
+      riskLevel = 'High';
+    } else if (finalScore >= 0.40) {
+      riskLevel = 'Moderate';
+    }
+
+    // Check if a report already exists for this patient
+    let combinedReport = await CombinedASDReport.findOne({
+      patientId: patient_id
+    }).sort({ generatedAt: -1 });
+
+    if (combinedReport) {
+      // Update existing report with new data
+      combinedReport.facialScore = screeningResults.facial?.score || null;
+      combinedReport.mriScore = screeningResults.mri?.score || null;
+      combinedReport.gazeScore = screeningResults.gaze?.score || null;
+      combinedReport.behaviorScore = screeningResults.behavior?.score || null;
+      combinedReport.questionnaireScore = screeningResults.questionnaire?.score || null;
+      combinedReport.finalScore = finalScore;
+      combinedReport.riskLevel = riskLevel;
+      combinedReport.completedModules = completedModules;
+      combinedReport.modulesCount = completedModules.length;
+      combinedReport.screeningReferences = screeningReferences;
+      combinedReport.updatedAt = Date.now();
+      
+      await combinedReport.save();
+    } else {
+      // Create new combined report
+      combinedReport = new CombinedASDReport({
+        patientId: patient_id,
+        facialScore: screeningResults.facial?.score || null,
+        mriScore: screeningResults.mri?.score || null,
+        gazeScore: screeningResults.gaze?.score || null,
+        behaviorScore: screeningResults.behavior?.score || null,
+        questionnaireScore: screeningResults.questionnaire?.score || null,
+        finalScore: finalScore,
+        riskLevel: riskLevel,
+        completedModules: completedModules,
+        modulesCount: completedModules.length,
+        screeningReferences: screeningReferences,
+        reviewedBy: req.user.id,
+        status: 'completed'
+      });
+
+      await combinedReport.save();
+    }
+
+    // Update patient's multimodal score
+    patient.multimodalScore = finalScore;
+    patient.multimodalRiskLevel = riskLevel;
+    patient.lastScreeningDate = Date.now();
+    patient.completedScreenings = completedModules;
+    await patient.save();
+
+    // Return the comprehensive report
+    res.json({
+      success: true,
+      reportId: combinedReport._id,
+      patientId: patient_id,
+      patientName: patient.name,
+      cortexaId: patient.cortexaId,
+      facial_score: screeningResults.facial?.score || null,
+      mri_score: screeningResults.mri?.score || null,
+      gaze_score: screeningResults.gaze?.score || null,
+      behavior_score: screeningResults.behavior?.score || null,
+      questionnaire_score: screeningResults.questionnaire?.score || null,
+      final_score: parseFloat(finalScore.toFixed(4)),
+      risk_level: riskLevel,
+      completed_modules: completedModules,
+      modules_count: completedModules.length,
+      therapist_decision: combinedReport.therapistDecision,
+      generated_at: combinedReport.generatedAt,
+      screening_details: {
+        facial: screeningResults.facial,
+        mri: screeningResults.mri,
+        gaze: screeningResults.gaze,
+        behavior: screeningResults.behavior,
+        questionnaire: screeningResults.questionnaire
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error generating combined ASD report:', error);
+    res.status(500).json({ 
+      message: 'Server error while generating combined report', 
+      error: error.message,
+      success: false 
+    });
+  }
+});
+
+/**
+ * POST /api/therapist/combined-report/decision
+ * 
+ * Record therapist's decision on a combined ASD report
+ */
+router.post('/combined-report/decision', async (req, res) => {
+  try {
+    const { patient_id, decision, notes } = req.body;
+
+    if (!patient_id || !decision) {
+      return res.status(400).json({ 
+        message: 'Patient ID and decision are required',
+        success: false 
+      });
+    }
+
+    // Verify patient belongs to this therapist
+    const patient = await Patient.findOne({ 
+      _id: patient_id, 
+      therapist_user_id: req.user.id 
+    });
+    
+    if (!patient) {
+      return res.status(404).json({ 
+        message: 'Patient not found or access denied',
+        success: false 
+      });
+    }
+
+    // Find the latest combined report
+    const combinedReport = await CombinedASDReport.findOne({
+      patientId: patient_id
+    }).sort({ generatedAt: -1 });
+
+    if (!combinedReport) {
+      return res.status(404).json({ 
+        message: 'No combined report found for this patient',
+        success: false 
+      });
+    }
+
+    // Update the report with therapist's decision
+    combinedReport.therapistDecision = decision;
+    if (notes) {
+      combinedReport.therapistNotes = notes;
+    }
+
+    if (decision === 'report_sent') {
+      combinedReport.sentToParentAt = Date.now();
+      combinedReport.status = 'sent_to_parent';
+    } else if (decision === 'consultation_scheduled') {
+      combinedReport.consultationScheduledAt = Date.now();
+    }
+
+    await combinedReport.save();
+
+    res.json({
+      success: true,
+      message: 'Therapist decision recorded successfully',
+      decision: decision,
+      reportId: combinedReport._id
+    });
+
+  } catch (error) {
+    console.error('❌ Error recording therapist decision:', error);
+    res.status(500).json({ 
+      message: 'Server error while recording decision', 
+      error: error.message,
+      success: false 
+    });
+  }
+});
+
+/**
+ * GET /api/therapist/patient/:id/combined-report
+ * 
+ * Get the latest combined report for a specific patient
+ */
+router.get('/patient/:id/combined-report', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verify patient belongs to this therapist
+    const patient = await Patient.findOne({ 
+      _id: id, 
+      therapist_user_id: req.user.id 
+    });
+    
+    if (!patient) {
+      return res.status(404).json({ 
+        message: 'Patient not found or access denied',
+        success: false 
+      });
+    }
+
+    // Find the latest combined report
+    const combinedReport = await CombinedASDReport.findOne({
+      patientId: id
+    })
+    .sort({ generatedAt: -1 })
+    .populate('reviewedBy', 'username email');
+
+    if (!combinedReport) {
+      return res.status(404).json({ 
+        message: 'No combined report found for this patient',
+        success: false 
+      });
+    }
+
+    res.json({
+      success: true,
+      report: {
+        reportId: combinedReport._id,
+        patientId: patient._id,
+        patientName: patient.name,
+        cortexaId: patient.cortexaId,
+        facial_score: combinedReport.facialScore,
+        mri_score: combinedReport.mriScore,
+        gaze_score: combinedReport.gazeScore,
+        behavior_score: combinedReport.behaviorScore,
+        questionnaire_score: combinedReport.questionnaireScore,
+        final_score: combinedReport.finalScore,
+        risk_level: combinedReport.riskLevel,
+        completed_modules: combinedReport.completedModules,
+        modules_count: combinedReport.modulesCount,
+        therapist_decision: combinedReport.therapistDecision,
+        therapist_notes: combinedReport.therapistNotes,
+        status: combinedReport.status,
+        generated_at: combinedReport.generatedAt,
+        sent_to_parent_at: combinedReport.sentToParentAt,
+        consultation_scheduled_at: combinedReport.consultationScheduledAt,
+        reviewed_by: combinedReport.reviewedBy
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching combined report:', error);
+    res.status(500).json({ 
+      message: 'Server error while fetching combined report', 
+      error: error.message,
+      success: false 
+    });
   }
 });
 

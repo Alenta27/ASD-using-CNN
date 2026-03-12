@@ -25,6 +25,7 @@ import {
   FiSettings,
   FiLogOut,
   FiActivity,
+  FiDatabase,
 } from 'react-icons/fi';
 import DreamDatasetAnalysis from '../components/DreamDatasetAnalysis';
 import './ResearchDashboard.css';
@@ -185,6 +186,7 @@ const Sidebar = ({ activeNav, onNavClick, onLogout }) => {
     { id: 'gender', label: 'Gender Analysis', icon: FiUsers, path: '/research/gender' },
     { id: 'regional', label: 'Regional Prevalence', icon: FiMap, path: '/research/regional' },
     { id: 'dream', label: 'DREAM Dataset Analysis', icon: FiActivity, path: '/research/dream' },
+    { id: 'datasets', label: 'Dataset Repository', icon: FiDatabase, path: '/research/datasets' },
     { id: 'articles', label: 'Research Articles', icon: FiBook, path: '/research/articles' },
     { id: 'models', label: 'Screening Models', icon: FiCpu, path: '/research/models' },
   ];
@@ -303,6 +305,143 @@ const HomePage = () => (
             />
           </LineChart>
         </ResponsiveContainer>
+      </div>
+    </div>
+
+    {/* Research Datasets & Model Development Section */}
+    <div className="datasets-section">
+      <div className="section-header">
+        <h2>Research Datasets & Model Development</h2>
+        <p className="section-description">
+          This section summarizes the multimodal datasets used to develop and evaluate the CORTEXA Autism Detection System.
+        </p>
+      </div>
+
+      <div className="dataset-cards-grid">
+        {/* Dataset 1: ABIDE MRI */}
+        <div className="dataset-card">
+          <div className="dataset-icon">🧠</div>
+          <div className="dataset-content">
+            <h3 className="dataset-name">ABIDE MRI Dataset</h3>
+            <div className="dataset-meta">
+              <span className="dataset-type">Neuroimaging (MRI brain scans)</span>
+            </div>
+            <div className="dataset-info">
+              <div className="info-item">
+                <span className="info-label">Purpose:</span>
+                <span className="info-value">Detect structural brain differences in ASD</span>
+              </div>
+              <div className="info-item">
+                <span className="info-label">Model Used:</span>
+                <span className="info-value">Support Vector Machine (SVM)</span>
+              </div>
+              <div className="info-item">
+                <span className="info-label">Features:</span>
+                <span className="info-value">Brain connectivity patterns, cortical thickness</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Dataset 2: Facial Emotion */}
+        <div className="dataset-card">
+          <div className="dataset-icon">😊</div>
+          <div className="dataset-content">
+            <h3 className="dataset-name">Facial Emotion Dataset</h3>
+            <div className="dataset-meta">
+              <span className="dataset-type">Image dataset</span>
+            </div>
+            <div className="dataset-info">
+              <div className="info-item">
+                <span className="info-label">Purpose:</span>
+                <span className="info-value">Facial expression screening for early autism indicators</span>
+              </div>
+              <div className="info-item">
+                <span className="info-label">Model Used:</span>
+                <span className="info-value">Convolutional Neural Network (CNN)</span>
+              </div>
+              <div className="info-item">
+                <span className="info-label">Features:</span>
+                <span className="info-value">Facial emotion recognition (happy, sad, neutral, angry)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Dataset 3: DREAM Autism Therapy */}
+        <div className="dataset-card">
+          <div className="dataset-icon">👁️</div>
+          <div className="dataset-content">
+            <h3 className="dataset-name">DREAM Autism Therapy Dataset</h3>
+            <div className="dataset-meta">
+              <span className="dataset-type">Behavioral motion and gaze dataset</span>
+            </div>
+            <div className="dataset-info">
+              <div className="info-item">
+                <span className="info-label">Purpose:</span>
+                <span className="info-value">Analyze behavioral patterns during therapy sessions</span>
+              </div>
+              <div className="info-item">
+                <span className="info-label">Features Extracted:</span>
+                <ul className="features-list">
+                  <li>Average Joint Velocity</li>
+                  <li>Head Gaze Variance</li>
+                  <li>Communication Score (ADOS)</li>
+                  <li>Movement Displacement Ratio</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Dataset 4: Behavioral Interaction */}
+        <div className="dataset-card">
+          <div className="dataset-icon">🎮</div>
+          <div className="dataset-content">
+            <h3 className="dataset-name">Behavioral Interaction Dataset</h3>
+            <div className="dataset-meta">
+              <span className="dataset-type">Game interaction logs</span>
+            </div>
+            <div className="dataset-info">
+              <div className="info-item">
+                <span className="info-label">Purpose:</span>
+                <span className="info-value">Measure attention span and cognitive response</span>
+              </div>
+              <div className="info-item">
+                <span className="info-label">Features:</span>
+                <ul className="features-list">
+                  <li>Reaction time</li>
+                  <li>Focus duration</li>
+                  <li>Error rate</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Dataset 5: Autism Screening Questionnaire */}
+        <div className="dataset-card">
+          <div className="dataset-icon">📋</div>
+          <div className="dataset-content">
+            <h3 className="dataset-name">Autism Screening Questionnaire Dataset</h3>
+            <div className="dataset-meta">
+              <span className="dataset-type">Behavioral questionnaire</span>
+            </div>
+            <div className="dataset-info">
+              <div className="info-item">
+                <span className="info-label">Purpose:</span>
+                <span className="info-value">Initial autism risk screening</span>
+              </div>
+              <div className="info-item">
+                <span className="info-label">Features:</span>
+                <ul className="features-list">
+                  <li>Behavioral scoring</li>
+                  <li>Risk classification</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -556,6 +695,109 @@ const ArticlesPage = () => {
   );
 };
 
+const DatasetRepositoryPage = () => {
+  const handleDownload = (datasetName, downloadUrl) => {
+    if (downloadUrl) {
+      window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      alert(`Download for ${datasetName} is not yet available.`);
+    }
+  };
+
+  const datasets = [
+    {
+      id: 1,
+      name: 'DREAM Autism Therapy Dataset',
+      type: 'Behavioral motion + gaze dataset',
+      size: '31 GB',
+      description: 'Therapy session recordings used to analyze behavioral motion and gaze patterns in children with autism.',
+      icon: '👁️',
+      downloadUrl: 'https://github.com/dream2020/data',
+      color: '#667eea'
+    },
+    {
+      id: 2,
+      name: 'ABIDE MRI Dataset',
+      type: 'Neuroimaging MRI dataset',
+      size: '~1 TB',
+      description: 'Brain imaging dataset used for autism classification using machine learning.',
+      icon: '🧠',
+      downloadUrl: 'http://fcon_1000.projects.nitrc.org/indi/abide/',
+      color: '#f97316'
+    },
+    {
+      id: 3,
+      name: 'Facial Emotion Recognition Dataset',
+      type: 'Image dataset',
+      size: '~500 MB',
+      description: 'Facial expression dataset used for CNN-based emotion recognition.',
+      icon: '😊',
+      downloadUrl: null,
+      color: '#2563eb'
+    },
+    {
+      id: 4,
+      name: 'Behavioral Interaction Dataset',
+      type: 'Game interaction logs',
+      size: '~200 MB',
+      description: 'Dataset collected from attention-based behavioral games.',
+      icon: '🎮',
+      downloadUrl: null,
+      color: '#10b981'
+    },
+  ];
+
+  return (
+    <div className="research-content">
+      <div className="page-header">
+        <h1>CORTEXA Research Dataset Repository</h1>
+        <p>This repository provides access to datasets used for developing and evaluating the CORTEXA Autism Detection System.</p>
+      </div>
+
+      <div className="repository-grid">
+        {datasets.map((dataset) => (
+          <div key={dataset.id} className="repository-card" style={{ borderLeftColor: dataset.color }}>
+            <div className="repository-header">
+              <div className="repository-icon" style={{ backgroundColor: `${dataset.color}20` }}>
+                {dataset.icon}
+              </div>
+              <div className="repository-meta">
+                <h3 className="repository-name">{dataset.name}</h3>
+                <div className="repository-tags">
+                  <span className="tag type-tag">{dataset.type}</span>
+                  <span className="tag size-tag">{dataset.size}</span>
+                </div>
+              </div>
+            </div>
+            
+            <p className="repository-description">{dataset.description}</p>
+            
+            <div className="repository-actions">
+              <button 
+                className="download-btn"
+                onClick={() => handleDownload(dataset.name, dataset.downloadUrl)}
+                style={{ backgroundColor: dataset.color }}
+              >
+                {dataset.downloadUrl ? '⬇️ Download Dataset' : '🔒 Access Restricted'}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="repository-note">
+        <h4>📚 Dataset Usage Guidelines</h4>
+        <ul>
+          <li>All datasets are provided for <strong>research and educational purposes only</strong></li>
+          <li>Please cite the original dataset sources in your publications</li>
+          <li>Follow each dataset's specific license and usage terms</li>
+          <li>For proprietary datasets, contact the research team for access permissions</li>
+        </ul>
+      </div>
+    </div>
+  );
+};
+
 const ModelsPage = () => (
   <div className="research-content">
     <div className="page-header">
@@ -648,6 +890,7 @@ export default function ResearchDashboard() {
     gender: <GenderPage />,
     regional: <RegionalPage />,
     dream: <DreamDatasetAnalysis />,
+    datasets: <DatasetRepositoryPage />,
     articles: <ArticlesPage />,
     models: <ModelsPage />,
   };
@@ -659,6 +902,7 @@ export default function ResearchDashboard() {
       '/research/gender': 'gender',
       '/research/regional': 'regional',
       '/research/dream': 'dream',
+      '/research/datasets': 'datasets',
       '/research/articles': 'articles',
       '/research/models': 'models',
     };

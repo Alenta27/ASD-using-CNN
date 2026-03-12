@@ -34,7 +34,14 @@ router.post('/', upload.single('image'), (req, res) => {
     }
 
     const pythonScriptPath = path.join(__dirname, '..', 'ai_model', 'predict.py');
-    console.log('🐍 [Facial Prediction] Spawning Python process:', pythonScriptPath);
+    console.log('🐍 [Facial Prediction] Python script path:', pythonScriptPath);
+    console.log('🐍 [Facial Prediction] Script exists:', fs.existsSync(pythonScriptPath));
+
+    // Verify Python script exists
+    if (!fs.existsSync(pythonScriptPath)) {
+        console.error('❌ [Facial Prediction] Python script not found at:', pythonScriptPath);
+        return res.status(500).json({ error: 'Prediction service not available. Please contact support.' });
+    }
 
     const pythonProcess = spawn('python', [pythonScriptPath, imagePath]);
 
@@ -55,19 +62,34 @@ router.post('/', upload.single('image'), (req, res) => {
         
         // Log any stderr output (warnings, info messages)
         if (errorData) {
-            console.log('📋 [Facial Prediction] Python stderr output:', errorData.substring(0, 200));
+            console.log('📋 [Facial Prediction] Python stderr output:', errorData);
+        }
+
+        // Delete uploaded file after processing
+        try {
+            fs.unlinkSync(imagePath);
+            console.log('🗑️  [Facial Prediction] Cleaned up uploaded file');
+        } catch (cleanupErr) {
+            console.error('⚠️  Failed to cleanup uploaded file:', cleanupErr);
         }
 
         // Check the exit code
         if (code !== 0) {
-            console.error('❌ [Facial Prediction] Python script failed');
+            console.error('❌ [Facial Prediction] Python script failed with code:', code);
             console.error('Error details:', errorData);
-            return res.status(500).json({ error: 'Prediction script failed. Please try again.' });
+            return res.status(500).json({ error: 'Prediction script failed. Please ensure Python and required packages are installed.' });
         }
 
         try {
             // Parse the prediction result
-            console.log('📊 [Facial Prediction] Raw Python output:', predictionData.substring(0, 200));
+            console.log('📊 [Facial Prediction] Raw Python output:', predictionData);
+            
+            // Handle empty output
+            if (!predictionData || predictionData.trim() === '') {
+                console.error('❌ [Facial Prediction] No output from Python script');
+                return res.status(500).json({ error: 'No response from prediction service. Please check server logs.' });
+            }
+            
             const predictionResult = JSON.parse(predictionData);
             
             // Check if there's an error in the result (like "No face detected")

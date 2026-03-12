@@ -143,6 +143,7 @@ function App() {
           <Route path="/research/gender" element={<ResearchDashboard />} />
           <Route path="/research/regional" element={<ResearchDashboard />} />
           <Route path="/research/dream" element={<ResearchDashboard />} />
+          <Route path="/research/datasets" element={<ResearchDashboard />} />
           <Route path="/research/articles" element={<ResearchDashboard />} />
           <Route path="/research/models" element={<ResearchDashboard />} />
           <Route path="/research/model-performance" element={<ResearchDashboard />} />

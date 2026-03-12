@@ -6,11 +6,19 @@ const getKeys = () => {
   try {
     const token = localStorage.getItem('token');
     if (!token) {
-      throw new Error('No authentication token found. Please log in.');
+      // Return guest keys instead of redirecting to login
+      return {
+        CHILDREN_KEY: 'children_guest',
+        REPORTS_KEY: 'screening_reports_guest'
+      };
     }
     const decoded = JSON.parse(atob(token.split('.')[1]));
     if (!decoded.id) {
-      throw new Error('Invalid token format. Please log in again.');
+      // Return guest keys instead of redirecting to login
+      return {
+        CHILDREN_KEY: 'children_guest',
+        REPORTS_KEY: 'screening_reports_guest'
+      };
     }
     return {
       CHILDREN_KEY: `children_${decoded.id}`,
@@ -18,9 +26,11 @@ const getKeys = () => {
     };
   } catch (error) {
     console.error('Token parsing error:', error);
-    localStorage.clear();
-    window.location.href = '/login';
-    throw error;
+    // Return guest keys instead of redirecting to login
+    return {
+      CHILDREN_KEY: 'children_guest',
+      REPORTS_KEY: 'screening_reports_guest'
+    };
   }
 };
 
