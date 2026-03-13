@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS # 1. Import CORS
 import os
 import joblib
+import pickle
 import numpy as np
 import werkzeug.utils
 from pathlib import Path
@@ -17,8 +18,46 @@ CORS(app) # 2. Initialize CORS for your app
 # --- Load the saved model, scaler, and atlas ---
 backend_dir = Path(__file__).parent.parent
 asd_fmri_dir = backend_dir / 'asd_fmri'
-model = joblib.load(asd_fmri_dir / 'asd_svm_model.pkl')
-scaler = joblib.load(asd_fmri_dir / 'scaler.pkl')
+MODEL_FILENAME = 'asd_mri_model_new.pkl'
+SCALER_FILENAME = 'scaler.pkl'
+TRAINING_DATASET_INFO = 'ABIDE dataset (Stanford, UCLA, Caltech, Oregon, Michigan)'
+
+
+def load_serialized_model(model_path):
+    """Load model with joblib first, then pickle fallback."""
+    try:
+        return joblib.load(model_path), 'joblib'
+    except Exception:
+        with open(model_path, 'rb') as f:
+            return pickle.load(f), 'pickle'
+
+
+def compute_class_probabilities(model_obj, features_2d, prediction_value):
+    """Return (control_probability, asd_probability) using available model APIs."""
+    if hasattr(model_obj, 'predict_proba'):
+        probs = model_obj.predict_proba(features_2d)[0]
+        if len(probs) >= 2:
+            return float(probs[0]), float(probs[1])
+
+    if hasattr(model_obj, 'decision_function'):
+        decision = float(np.ravel(model_obj.decision_function(features_2d))[0])
+        asd_prob = float(1.0 / (1.0 + np.exp(-decision)))
+        return float(1.0 - asd_prob), asd_prob
+
+    asd_prob = 1.0 if int(prediction_value) == 1 else 0.0
+    return float(1.0 - asd_prob), float(asd_prob)
+
+
+model_path = asd_fmri_dir / MODEL_FILENAME
+if not model_path.exists():
+    raise FileNotFoundError(f"MRI model file missing: {model_path}")
+model, model_loader = load_serialized_model(model_path)
+print(f"Loaded MRI model via {model_loader}: {model_path}")
+
+scaler_path = asd_fmri_dir / SCALER_FILENAME
+scaler = joblib.load(scaler_path) if scaler_path.exists() else None
+if scaler is None:
+    print(f"Scaler not found at {scaler_path}. Using model without external scaler.")
 atlas = datasets.fetch_atlas_harvard_oxford('cort-maxprob-thr25-2mm')
 
 # --- Create the tools for feature extraction ---
@@ -119,10 +158,16 @@ def process_new_scan(scan_path):
 
 @app.route('/predict_mri', methods=['POST'])
 def predict():
-    if 'mri_scan' not in request.files:
+    upload_key = None
+    for candidate_key in ('mri_scan', 'mri_file', 'file'):
+        if candidate_key in request.files:
+            upload_key = candidate_key
+            break
+
+    if upload_key is None:
         return jsonify({'error': 'No file part'}), 400
     
-    file = request.files['mri_scan']
+    file = request.files[upload_key]
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
 
@@ -136,24 +181,23 @@ def predict():
 
     if features is not None:
         try:
-            scaled_features = scaler.transform(features)
-            prediction = model.predict(scaled_features)
-            probabilities = model.predict_proba(scaled_features)[0]
+            features_input = scaler.transform(features) if scaler is not None else features
+            prediction = int(model.predict(features_input)[0])
+            control_prob, asd_prob = compute_class_probabilities(model, features_input, prediction)
             
-            # probabilities[0] = Control probability, probabilities[1] = ASD probability
-            control_prob = float(probabilities[0])
-            asd_prob = float(probabilities[1])
-            
-            diagnosis = "ASD" if prediction[0] == 1 else "Control"
-            confidence = float(max(probabilities))
+            diagnosis = "ASD" if prediction == 1 else "Control"
+            prediction_label = "ASD Detected" if prediction == 1 else "No ASD Detected"
+            confidence = float(asd_prob if prediction == 1 else control_prob)
             
             os.remove(filepath)
             
             return jsonify({
+                'prediction': prediction_label,
                 'diagnosis': diagnosis,
                 'confidence': confidence,
                 'asd_probability': asd_prob,
-                'control_probability': control_prob
+                'control_probability': control_prob,
+                'dataset': TRAINING_DATASET_INFO
             })
         except Exception as e:
             print(f"Prediction error: {e}")

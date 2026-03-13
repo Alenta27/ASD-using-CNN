@@ -1,13 +1,22 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FaUpload, FaSpinner, FaCheckCircle, FaExclamationTriangle, FaArrowLeft, FaInfoCircle, FaFolder } from 'react-icons/fa';
+import { FaSpinner, FaCheckCircle, FaExclamationTriangle, FaArrowLeft, FaInfoCircle, FaFolder } from 'react-icons/fa';
 
 const MRIScreeningPage = () => {
   const navigate = useNavigate();
   const [file, setFile] = useState(null);
+  const [filePreviewUrl, setFilePreviewUrl] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    return () => {
+      if (filePreviewUrl) {
+        URL.revokeObjectURL(filePreviewUrl);
+      }
+    };
+  }, [filePreviewUrl]);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -17,10 +26,16 @@ const MRIScreeningPage = () => {
           selectedFile.name.toLowerCase().endsWith('.1d') || 
           selectedFile.name.toLowerCase().endsWith('.txt')) {
         setFile(selectedFile);
+        if (selectedFile.type && selectedFile.type.startsWith('image/')) {
+          setFilePreviewUrl(URL.createObjectURL(selectedFile));
+        } else {
+          setFilePreviewUrl(null);
+        }
         setError(null);
       } else {
         setError('Please upload a .nii.gz, .1D, or .txt file');
         setFile(null);
+        setFilePreviewUrl(null);
       }
     }
   };
@@ -106,7 +121,7 @@ const MRIScreeningPage = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-400 via-purple-300 to-blue-400 py-12 px-4">
-      <div className="max-w-2xl mx-auto">
+      <div className="max-w-4xl mx-auto">
         {/* Back Button */}
         <button
           onClick={handleBack}
@@ -221,23 +236,52 @@ const MRIScreeningPage = () => {
           {/* Results Display - User Friendly */}
           {result && (
             <div className="mt-8 space-y-6">
+              {/* Uploaded Scan Preview / Context */}
+              <div className="bg-white rounded-xl p-6 border border-gray-200">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Uploaded MRI Scan</h3>
+                <div className="grid md:grid-cols-2 gap-6 items-center">
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 min-h-[180px] flex items-center justify-center">
+                    {filePreviewUrl ? (
+                      <img
+                        src={filePreviewUrl}
+                        alt="Uploaded MRI scan"
+                        className="max-h-64 w-auto rounded-md object-contain"
+                      />
+                    ) : (
+                      <div className="text-center text-gray-600">
+                        <p className="font-semibold">Preview not available for this MRI format</p>
+                        <p className="text-sm mt-1">File: {file?.name || 'N/A'}</p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-2 text-gray-700">
+                    <p><span className="font-semibold">Filename:</span> {file?.name || 'N/A'}</p>
+                    <p><span className="font-semibold">Size:</span> {file ? `${(file.size / (1024 * 1024)).toFixed(2)} MB` : 'N/A'}</p>
+                    <p><span className="font-semibold">Model Result:</span> {result.prediction || (result.diagnosis === 'ASD' ? 'ASD Detected' : 'No ASD Detected')}</p>
+                    <p><span className="font-semibold">Confidence:</span> {(result.confidence * 100).toFixed(1)}%</p>
+                  </div>
+                </div>
+              </div>
+
               {/* Diagnosis Result - Large and Clear */}
               <div className={`rounded-xl p-8 border-2 ${
-                result.diagnosis === 'ASD' 
+                (result.prediction || '').toLowerCase().includes('asd detected') || result.diagnosis === 'ASD'
                   ? 'bg-orange-50 border-orange-300' 
                   : 'bg-green-50 border-green-300'
               }`}>
                 <div className="text-center">
                   <h2 className="text-sm uppercase tracking-wider text-gray-600 font-semibold mb-2">Screening Result</h2>
                   <p className={`text-5xl font-bold ${
-                    result.diagnosis === 'ASD' 
+                    (result.prediction || '').toLowerCase().includes('asd detected') || result.diagnosis === 'ASD'
                       ? 'text-orange-600' 
                       : 'text-green-600'
                   }`}>
-                    {result.diagnosis === 'ASD' ? '🔍 ASD Pattern Detected' : '✅ Control/Normal Pattern'}
+                    {(result.prediction || (result.diagnosis === 'ASD' ? 'ASD Detected' : 'No ASD Detected')) === 'ASD Detected'
+                      ? '🔍 ASD Detected'
+                      : '✅ No ASD Detected'}
                   </p>
                   <p className="text-gray-600 mt-3 text-lg">
-                    {result.diagnosis === 'ASD' 
+                    ((result.prediction || (result.diagnosis === 'ASD' ? 'ASD Detected' : 'No ASD Detected')) === 'ASD Detected')
                       ? 'The brain connectivity pattern shows characteristics associated with Autism Spectrum Disorder'
                       : 'The brain connectivity pattern appears typical and does not show ASD-associated characteristics'
                     }
@@ -331,7 +375,7 @@ const MRIScreeningPage = () => {
                   <li>✓ Results should be used as a <strong>screening aid, not a diagnosis</strong></li>
                   <li>✓ Always combine with clinical assessment and behavioral evaluation</li>
                   <li>✓ Consult with healthcare professionals for clinical diagnosis</li>
-                  <li>✓ Technology: Support Vector Machine (SVM) trained on ABIDE Caltech dataset</li>
+                  <li>✓ Technology: Support Vector Machine (SVM) trained on ABIDE multi-site dataset (Stanford, UCLA, Caltech, Oregon, Michigan)</li>
                 </ul>
               </div>
 
@@ -341,6 +385,7 @@ const MRIScreeningPage = () => {
                   onClick={() => {
                     setResult(null);
                     setFile(null);
+                    setFilePreviewUrl(null);
                   }}
                   className="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
                 >

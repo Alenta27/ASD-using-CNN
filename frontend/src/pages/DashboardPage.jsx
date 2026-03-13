@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { FaUserPlus, FaUserEdit, FaTrash, FaFileMedicalAlt, FaHistory, FaGraduationCap, FaClipboardList, FaUsers, FaLightbulb, FaHeart, FaHome, FaCalendar, FaChartLine, FaFileAlt, FaUserTie, FaBook, FaCog, FaBell, FaSearch, FaBrain } from 'react-icons/fa';
+import { FaUserPlus, FaUserEdit, FaTrash, FaUsers, FaLightbulb, FaHeart, FaHome, FaCalendar, FaChartLine, FaUserTie, FaBook, FaCog, FaBell, FaSearch, FaBrain, FaCheckCircle, FaArrowRight, FaMoon, FaSmile, FaExternalLinkAlt, FaFileAlt } from 'react-icons/fa';
 import { FiLogOut } from 'react-icons/fi';
 import SurveyInsights from '../components/SurveyInsights';
 
@@ -267,8 +267,126 @@ const DashboardPage = () => {
   const [appointments, setAppointments] = useState([]);
   const [parentInfo, setParentInfo] = useState({ name: '', email: '' });
   const [isSurveyInsightsOpen, setIsSurveyInsightsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [moodCheckIn, setMoodCheckIn] = useState({ mood: 'Calm', attention: 'Medium', sleep: 'Good' });
+
+  const searchRef = useRef(null);
+  const notificationRef = useRef(null);
+  const profileRef = useRef(null);
 
   const childIdParam = useMemo(() => searchParams.get('childId'), [searchParams]);
+
+  const dailyTips = useMemo(() => ([
+    'Use short, clear sentences and pause for 5-8 seconds to give your child extra processing time.',
+    'Offer two simple choices during routines to build communication and reduce overwhelm.',
+    'Use visual schedules for transitions so your child can predict what comes next.',
+    'Name emotions out loud and model calm breathing together during difficult moments.',
+    'Create a quiet sensory corner with familiar textures, soft light, and one preferred toy.',
+    'Celebrate small social attempts with immediate praise to reinforce positive interaction.'
+  ]), []);
+
+  const currentTip = useMemo(() => {
+    const dayIndex = new Date().getDate() % dailyTips.length;
+    return dailyTips[dayIndex];
+  }, [dailyTips]);
+
+  const developmentMilestones = useMemo(() => {
+    const age = Number(selectedChild?.age ?? 0);
+    const ageFactor = Math.min(1, age / 12 || 0.25);
+    return [
+      { key: 'communication', label: 'Communication', value: Math.min(95, Math.round(40 + ageFactor * 45)) },
+      { key: 'social', label: 'Social Interaction', value: Math.min(90, Math.round(35 + ageFactor * 40)) },
+      { key: 'attention', label: 'Attention Span', value: Math.min(88, Math.round(30 + ageFactor * 42)) },
+      { key: 'behavior', label: 'Behavior Regulation', value: Math.min(92, Math.round(33 + ageFactor * 44)) }
+    ];
+  }, [selectedChild]);
+
+  const recentActivities = useMemo(() => {
+    const childName = selectedChild?.name || 'your child';
+    const items = [
+      { id: 'activity-1', title: `Completed parent survey for ${childName}`, when: 'Today', icon: FaCheckCircle },
+      { id: 'activity-2', title: `Attention analysis session recorded for ${childName}`, when: 'Yesterday', icon: FaBrain },
+      { id: 'activity-3', title: 'Appointment booked with therapy specialist', when: '2 days ago', icon: FaCalendar },
+      { id: 'activity-4', title: `Development notes uploaded for ${childName}`, when: '3 days ago', icon: FaFileAlt }
+    ];
+    return items;
+  }, [selectedChild]);
+
+  const guidanceItems = useMemo(() => ([
+    {
+      id: 'guidance-1',
+      title: 'Early Signs of Autism',
+      text: 'Watch for differences in eye contact, social response, language pacing, and repetitive behaviors across daily routines.'
+    },
+    {
+      id: 'guidance-2',
+      title: 'Improving Communication',
+      text: 'Pair words with gestures, visual cues, and predictable routines to support expression and understanding.'
+    },
+    {
+      id: 'guidance-3',
+      title: 'Sensory Sensitivity Tips',
+      text: 'Reduce sensory load in noisy spaces and prepare comfort tools like headphones, fidgets, or familiar objects.'
+    }
+  ]), []);
+
+  const resourceHighlights = useMemo(() => ([
+    {
+      id: 'resource-1',
+      type: 'Parenting Article',
+      title: 'Building Communication Through Play',
+      description: 'Practical play-based ideas to strengthen turn-taking, requesting, and shared attention at home.',
+      path: '/parent/resources'
+    },
+    {
+      id: 'resource-2',
+      type: 'Therapy Guidance',
+      title: 'Home Routine Support Guide',
+      description: 'Simple structure templates to make mornings, meals, and bedtime easier and more predictable.',
+      path: '/parent/resources'
+    },
+    {
+      id: 'resource-3',
+      type: 'Support Organization',
+      title: 'Autism Family Network Directory',
+      description: 'Explore local and online support groups, parent communities, and service directories.',
+      path: '/parent/resources'
+    }
+  ]), []);
+
+  const upcomingReminders = useMemo(() => {
+    const base = appointments
+      .filter((a) => a.appointmentDate || a.date)
+      .map((a) => ({
+        id: a._id || a.id,
+        title: `Therapy session: ${a.childId?.name || selectedChild?.name || 'Child'}`,
+        time: new Date(a.appointmentDate || a.date).toLocaleDateString(),
+        type: 'session'
+      }));
+
+    const fallback = [
+      { id: 'reminder-q', title: 'Questionnaire update due this week', time: 'In 2 days', type: 'questionnaire' },
+      { id: 'reminder-e', title: 'Scheduled developmental evaluation', time: 'Next Monday', type: 'evaluation' }
+    ];
+
+    return [...base, ...fallback].slice(0, 5);
+  }, [appointments, selectedChild]);
+
+  const motivationalMessage = useMemo(() => {
+    const childName = selectedChild?.name || 'your child';
+    return `Every small step matters. Your steady support for ${childName} is building confidence, connection, and long-term growth.`;
+  }, [selectedChild]);
+
+  const developmentalStage = useMemo(() => {
+    const age = Number(selectedChild?.age ?? 0);
+    if (age <= 3) return 'Early Childhood';
+    if (age <= 6) return 'Preschool';
+    if (age <= 12) return 'School Age';
+    return 'Adolescent';
+  }, [selectedChild]);
 
   useEffect(() => {
     const fetchChildrenAndParent = async () => {
@@ -403,17 +521,49 @@ const DashboardPage = () => {
   const parentName = parentInfo.name?.trim() || parentInfo.email?.split('@')[0] || 'Parent';
   const parentInitial = parentName?.[0]?.toUpperCase() || 'P';
 
+  const upcomingNotifications = useMemo(() => {
+    return appointments
+      .filter(a => a.date && new Date(a.date) >= new Date())
+      .slice(0, 5)
+      .map(a => ({
+        id: a._id || a.id,
+        text: `Appointment with Dr. ${a.doctorName || a.doctor || 'Doctor'} on ${new Date(a.date).toLocaleDateString()}`,
+      }));
+  }, [appointments]);
+
   const navItems = useMemo(() => (
     [
       { id: 'dashboard', label: 'Dashboard', icon: FaHome, path: '/dashboard' },
       { id: 'appointments', label: 'Appointments', icon: FaCalendar, path: '/parent/appointments' },
-      { id: 'screening', label: 'Screening Results', icon: FaChartLine, path: '/parent/screening-results' },
+      { id: 'screening', label: 'Start Screening', icon: FaChartLine, path: '/parent/screening-results' },
       { id: 'attention', label: 'Attention Analysis', icon: FaBrain, path: '/parent/attention-analysis' },
       { id: 'care-team', label: 'Care Team', icon: FaUserTie, path: '/parent/care-team' },
       { id: 'resources', label: 'Resources', icon: FaBook, path: '/parent/resources' },
       { id: 'settings', label: 'Settings', icon: FaCog, path: '/parent/settings' },
     ]
   ), []);
+
+  const filteredNavItems = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase();
+    return navItems.filter(item => item.label.toLowerCase().includes(q));
+  }, [searchQuery, navItems]);
+
+  const filteredChildren = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase();
+    return children.filter(c => c.name?.toLowerCase().includes(q));
+  }, [searchQuery, children]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (searchRef.current && !searchRef.current.contains(e.target)) setShowSearchResults(false);
+      if (notificationRef.current && !notificationRef.current.contains(e.target)) setShowNotifications(false);
+      if (profileRef.current && !profileRef.current.contains(e.target)) setShowProfileMenu(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     const currentPath = location.pathname;
@@ -478,20 +628,115 @@ const DashboardPage = () => {
               <p className="text-gray-500 text-sm mt-1">Track and manage your child's development journey</p>
             </div>
             <div className="flex items-center gap-4">
-              <div className="relative hidden sm:block">
+              {/* Search */}
+              <div className="relative hidden sm:block" ref={searchRef}>
                 <FaSearch className="absolute left-3 top-3 text-gray-400" />
                 <input
                   type="text"
                   placeholder="Search..."
-                  className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  value={searchQuery}
+                  onChange={(e) => { setSearchQuery(e.target.value); setShowSearchResults(e.target.value.trim().length > 0); }}
+                  onFocus={() => searchQuery.trim() && setShowSearchResults(true)}
+                  className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 w-56"
                 />
+                {showSearchResults && (
+                  <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                    {filteredNavItems.length === 0 && filteredChildren.length === 0 ? (
+                      <div className="px-4 py-3 text-sm text-gray-500">No results found</div>
+                    ) : (
+                      <>
+                        {filteredNavItems.length > 0 && (
+                          <div>
+                            <p className="px-3 pt-2 pb-1 text-xs text-gray-400 font-semibold uppercase tracking-wide">Pages</p>
+                            {filteredNavItems.map(item => (
+                              <button
+                                key={item.id}
+                                onClick={() => { setActiveNav(item.id); navigate(item.path); setShowSearchResults(false); setSearchQuery(''); }}
+                                className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 text-left text-sm text-gray-700"
+                              >
+                                <item.icon size={13} className="text-blue-500" /> {item.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {filteredChildren.length > 0 && (
+                          <div>
+                            <p className="px-3 pt-2 pb-1 text-xs text-gray-400 font-semibold uppercase tracking-wide">Children</p>
+                            {filteredChildren.map(c => (
+                              <button
+                                key={c._id || c.id}
+                                onClick={() => { setSelectedChild(c); setShowSearchResults(false); setSearchQuery(''); }}
+                                className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 text-left text-sm text-gray-700"
+                              >
+                                <FaUsers size={13} className="text-blue-500" /> {c.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
-              <button className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-lg">
-                <FaBell size={20} />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-              </button>
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-300 to-blue-400 rounded-full flex items-center justify-center text-white font-bold" title={parentName}>
-                {parentInitial}
+
+              {/* Notification Bell */}
+              <div className="relative" ref={notificationRef}>
+                <button
+                  onClick={() => { setShowNotifications(prev => !prev); setShowProfileMenu(false); }}
+                  className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                >
+                  <FaBell size={20} />
+                  {upcomingNotifications.length > 0 && (
+                    <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+                  )}
+                </button>
+                {showNotifications && (
+                  <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                    <div className="px-4 py-3 border-b border-gray-100">
+                      <h3 className="font-semibold text-gray-800 text-sm">Notifications</h3>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto">
+                      {upcomingNotifications.length > 0 ? (
+                        upcomingNotifications.map(n => (
+                          <div key={n.id} className="px-4 py-3 border-b border-gray-50 hover:bg-gray-50 text-sm text-gray-700">{n.text}</div>
+                        ))
+                      ) : (
+                        <div className="px-4 py-6 text-center text-gray-500 text-sm">No new notifications</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Profile Avatar */}
+              <div className="relative" ref={profileRef}>
+                <button
+                  onClick={() => { setShowProfileMenu(prev => !prev); setShowNotifications(false); }}
+                  className="w-10 h-10 bg-gradient-to-br from-blue-300 to-blue-400 rounded-full flex items-center justify-center text-white font-bold hover:opacity-90 transition"
+                  title={parentName}
+                >
+                  {parentInitial}
+                </button>
+                {showProfileMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                    <div className="px-4 py-3 border-b border-gray-100">
+                      <p className="font-semibold text-gray-800 text-sm">{parentName}</p>
+                      <p className="text-xs text-gray-500 truncate">{parentInfo.email}</p>
+                    </div>
+                    <button
+                      onClick={() => { navigate('/parent/settings'); setShowProfileMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <FaCog size={14} /> Settings
+                    </button>
+                    <button
+                      onClick={() => { handleLogout(); setShowProfileMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-b-lg"
+                    >
+                      <FiLogOut size={14} /> Logout
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -500,24 +745,258 @@ const DashboardPage = () => {
         {/* Content Area */}
         <div className="flex-1 overflow-auto">
           <div className="p-8 space-y-8">
-            {/* Updates & Messages Widget */}
-            <div className="bg-white rounded-xl shadow-md p-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-4">Updates & Messages</h2>
-              <div className="border-l-4 border-blue-400 pl-4 py-2">
-                <p className="text-gray-500">No updates at this time</p>
+            {/* Motivational / Support Message */}
+            <div className="bg-gradient-to-r from-blue-600 to-cyan-600 rounded-xl shadow-md p-6 text-white">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold mb-2">You Are Making a Difference</h2>
+                  <p className="text-blue-50 leading-relaxed">{motivationalMessage}</p>
+                </div>
+                <FaHeart className="text-blue-100 text-2xl flex-shrink-0" />
+              </div>
+            </div>
+
+            {/* Top Utility Row */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              {/* Child Overview Card */}
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-200 to-blue-300 flex items-center justify-center text-blue-800 font-bold text-2xl">
+                    {selectedChild?.name?.[0]?.toUpperCase() || 'C'}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-800">{selectedChild?.name || 'No child selected'}</h3>
+                    <p className="text-sm text-gray-500">Age: {selectedChild?.age ?? '-'} years</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mt-5">
+                  <div className="bg-blue-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Developmental Stage</p>
+                    <p className="text-sm font-semibold text-blue-800">{developmentalStage}</p>
+                  </div>
+                  <div className="bg-green-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Last Activity</p>
+                    <p className="text-sm font-semibold text-green-800">Today</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => selectedChild && handleViewChild(selectedChild)}
+                  className="mt-4 w-full px-4 py-2 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 transition font-semibold text-sm"
+                >
+                  View Profile
+                </button>
+              </div>
+
+              {/* Daily Development Tip */}
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <FaLightbulb className="text-amber-500" />
+                  <h3 className="text-lg font-bold text-gray-800">Daily Development Tip</h3>
+                </div>
+                <p className="text-sm text-gray-600 leading-relaxed">{currentTip}</p>
+                <p className="text-xs text-gray-400 mt-4">New tip updates every day</p>
+              </div>
+
+              {/* Quick Actions Panel */}
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Quick Actions</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
+                  <button
+                    onClick={() => { setActiveNav('screening'); navigate('/parent/screening-results'); }}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 text-blue-800 rounded-lg hover:bg-blue-100 transition font-semibold text-sm"
+                  >
+                    <span>Start Screening</span>
+                    <FaArrowRight size={12} />
+                  </button>
+                  <button
+                    onClick={() => { setActiveNav('attention'); navigate('/parent/attention-analysis'); }}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-cyan-50 text-cyan-800 rounded-lg hover:bg-cyan-100 transition font-semibold text-sm"
+                  >
+                    <span>Start Attention Analysis</span>
+                    <FaArrowRight size={12} />
+                  </button>
+                  <button
+                    onClick={() => { setActiveNav('appointments'); navigate('/parent/appointments'); }}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-green-50 text-green-800 rounded-lg hover:bg-green-100 transition font-semibold text-sm"
+                  >
+                    <span>Book Appointment</span>
+                    <FaArrowRight size={12} />
+                  </button>
+                  <button
+                    onClick={() => { setActiveNav('resources'); navigate('/parent/resources'); }}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-amber-50 text-amber-800 rounded-lg hover:bg-amber-100 transition font-semibold text-sm"
+                  >
+                    <span>View Resources</span>
+                    <FaArrowRight size={12} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Mood Check-in + Upcoming Reminders */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="bg-white rounded-xl shadow-md p-6 xl:col-span-2">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Child Mood / Behavior Check-in</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <label className="text-sm text-gray-600">
+                    Mood
+                    <select
+                      value={moodCheckIn.mood}
+                      onChange={(e) => setMoodCheckIn((prev) => ({ ...prev, mood: e.target.value }))}
+                      className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    >
+                      <option>Calm</option>
+                      <option>Happy</option>
+                      <option>Anxious</option>
+                      <option>Irritable</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-gray-600">
+                    Attention Level
+                    <select
+                      value={moodCheckIn.attention}
+                      onChange={(e) => setMoodCheckIn((prev) => ({ ...prev, attention: e.target.value }))}
+                      className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    >
+                      <option>Low</option>
+                      <option>Medium</option>
+                      <option>High</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-gray-600">
+                    Sleep Quality
+                    <select
+                      value={moodCheckIn.sleep}
+                      onChange={(e) => setMoodCheckIn((prev) => ({ ...prev, sleep: e.target.value }))}
+                      className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    >
+                      <option>Poor</option>
+                      <option>Fair</option>
+                      <option>Good</option>
+                      <option>Excellent</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-50 text-amber-700 rounded-full text-xs font-medium">
+                    <FaSmile /> Mood: {moodCheckIn.mood}
+                  </div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">
+                    <FaBrain /> Attention: {moodCheckIn.attention}
+                  </div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-full text-xs font-medium">
+                    <FaMoon /> Sleep: {moodCheckIn.sleep}
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Upcoming Reminders</h3>
+                <div className="space-y-3">
+                  {upcomingReminders.map((reminder) => (
+                    <div key={reminder.id} className="p-3 bg-gray-50 rounded-lg">
+                      <p className="text-sm font-semibold text-gray-800">{reminder.title}</p>
+                      <p className="text-xs text-gray-500 mt-1">{reminder.time}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Development Tracker + Recent Activities */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Development Milestones Tracker</h3>
+                <div className="space-y-4">
+                  {developmentMilestones.map((milestone) => (
+                    <div key={milestone.key}>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-gray-700 font-medium">{milestone.label}</span>
+                        <span className="text-gray-500">{milestone.value}%</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2.5">
+                        <div
+                          className="bg-gradient-to-r from-blue-400 to-cyan-500 h-2.5 rounded-full"
+                          style={{ width: `${milestone.value}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Recent Activities</h3>
+                <div className="space-y-3">
+                  {recentActivities.map((activity) => {
+                    const ActivityIcon = activity.icon;
+                    return (
+                      <div key={activity.id} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                        <ActivityIcon className="text-blue-500 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-800">{activity.title}</p>
+                          <p className="text-xs text-gray-500 mt-1">{activity.when}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Parent Guidance + Resource Highlights */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Parent Guidance</h3>
+                <div className="space-y-4">
+                  {guidanceItems.map((item) => (
+                    <div key={item.id} className="p-4 border border-gray-100 rounded-lg bg-gray-50">
+                      <h4 className="font-semibold text-gray-800 text-sm">{item.title}</h4>
+                      <p className="text-sm text-gray-600 mt-2 leading-relaxed">{item.text}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-gray-800">Resource Highlights</h3>
+                  <button
+                    onClick={() => { setActiveNav('resources'); navigate('/parent/resources'); }}
+                    className="text-sm text-blue-600 hover:text-blue-800 font-semibold"
+                  >
+                    Browse All
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {resourceHighlights.map((resource) => (
+                    <button
+                      key={resource.id}
+                      onClick={() => { setActiveNav('resources'); navigate(resource.path); }}
+                      className="w-full text-left p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition"
+                    >
+                      <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">{resource.type}</p>
+                      <p className="text-sm font-semibold text-gray-800 mt-1">{resource.title}</p>
+                      <p className="text-xs text-gray-600 mt-1 leading-relaxed">{resource.description}</p>
+                      <span className="inline-flex items-center gap-1 text-xs text-blue-700 mt-2 font-medium">
+                        Open resource <FaExternalLinkAlt size={10} />
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
             {/* Survey Insights Widget */}
             <div className="bg-white rounded-xl shadow-md p-6">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-xl font-bold text-gray-800 mb-2">Survey Insights</h2>
                   <p className="text-sm text-gray-600">Analyze parent questionnaire responses using AI decision tree classification</p>
                 </div>
                 <button
                   onClick={() => setIsSurveyInsightsOpen(true)}
-                  className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-semibold whitespace-nowrap ml-4"
+                  className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-semibold whitespace-nowrap"
                 >
                   Start Survey
                 </button>
