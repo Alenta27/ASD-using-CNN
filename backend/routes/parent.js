@@ -11,6 +11,7 @@ const Patient = require('../models/patient');
 const Report = require('../models/report');
 const Appointment = require('../models/appointment');
 const Slot = require('../models/slot');
+const MoodCheckIn = require('../models/MoodCheckIn');
 
 // Initialize Razorpay
 const razorpay = new Razorpay({
@@ -539,6 +540,61 @@ router.get('/activity', verifyToken, async (req, res) => {
     
     res.json(activity);
   } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Save mood/behavior check-in for a child
+router.post('/mood-checkin', verifyToken, async (req, res) => {
+  try {
+    const { childId, mood, attention, sleep } = req.body;
+
+    if (!childId || !mood || !attention || !sleep) {
+      return res.status(400).json({ message: 'childId, mood, attention, and sleep are required.' });
+    }
+
+    const child = await Patient.findOne({ _id: childId, parent_id: req.user.id });
+    if (!child) {
+      return res.status(404).json({ message: 'Child not found.' });
+    }
+
+    const checkIn = await MoodCheckIn.create({
+      parentId: req.user.id,
+      childId,
+      mood,
+      attention,
+      sleep
+    });
+
+    res.status(201).json(checkIn);
+  } catch (error) {
+    console.error('POST /mood-checkin - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get latest mood/behavior check-in for a child
+router.get('/mood-checkin/:childId/latest', verifyToken, async (req, res) => {
+  try {
+    const { childId } = req.params;
+
+    const child = await Patient.findOne({ _id: childId, parent_id: req.user.id });
+    if (!child) {
+      return res.status(404).json({ message: 'Child not found.' });
+    }
+
+    const latest = await MoodCheckIn.findOne({
+      parentId: req.user.id,
+      childId
+    }).sort({ createdAt: -1 });
+
+    if (!latest) {
+      return res.json(null);
+    }
+
+    res.json(latest);
+  } catch (error) {
+    console.error('GET /mood-checkin/:childId/latest - Error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });

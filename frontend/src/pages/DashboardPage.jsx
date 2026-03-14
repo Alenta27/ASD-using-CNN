@@ -254,6 +254,8 @@ function ChildFormModal({ isOpen, onClose, onSave, initial }) {
   );
 }
 
+const DEFAULT_MOOD_CHECKIN = { mood: 'Calm', attention: 'Medium', sleep: 'Good' };
+
 const DashboardPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -271,11 +273,15 @@ const DashboardPage = () => {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [moodCheckIn, setMoodCheckIn] = useState({ mood: 'Calm', attention: 'Medium', sleep: 'Good' });
+  const [moodCheckIn, setMoodCheckIn] = useState(DEFAULT_MOOD_CHECKIN);
+  const [recentActivityFeed, setRecentActivityFeed] = useState([]);
+  const [childScreenings, setChildScreenings] = useState([]);
+  const [isSavingMoodCheckIn, setIsSavingMoodCheckIn] = useState(false);
 
   const searchRef = useRef(null);
   const notificationRef = useRef(null);
   const profileRef = useRef(null);
+  const skipMoodAutoSaveRef = useRef(true);
 
   const childIdParam = useMemo(() => searchParams.get('childId'), [searchParams]);
 
@@ -293,27 +299,72 @@ const DashboardPage = () => {
     return dailyTips[dayIndex];
   }, [dailyTips]);
 
+  const normalizeMetricToPercent = (value) => {
+    if (value === null || value === undefined) return null;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    const scaled = numeric >= 0 && numeric <= 1 ? numeric * 100 : numeric;
+    return Math.max(0, Math.min(100, Math.round(scaled)));
+  };
+
+  const findLatestScreeningByType = (type) => {
+    return childScreenings.find((screening) => screening.screeningType === type) || null;
+  };
+
   const developmentMilestones = useMemo(() => {
-    const age = Number(selectedChild?.age ?? 0);
-    const ageFactor = Math.min(1, age / 12 || 0.25);
+    const latestBehavioral = findLatestScreeningByType('behavioral');
+    const latestGaze = findLatestScreeningByType('gaze');
+    const latestSpeech = findLatestScreeningByType('speech');
+    const latestQuestionnaire = findLatestScreeningByType('questionnaire');
+
+    const communication = normalizeMetricToPercent(
+      latestBehavioral?.behavioralMetrics?.communication
+      ?? latestSpeech?.speechMetrics?.language
+      ?? (latestQuestionnaire?.resultScore !== undefined ? 1 - Number(latestQuestionnaire.resultScore) : null)
+    );
+
+    const social = normalizeMetricToPercent(
+      latestBehavioral?.behavioralMetrics?.socialInteraction
+      ?? (latestGaze?.resultScore !== undefined ? 1 - Number(latestGaze.resultScore) : null)
+    );
+
+    const attention = normalizeMetricToPercent(
+      latestGaze?.gazeMetrics?.attentionScore
+      ?? (latestGaze?.resultScore !== undefined ? 1 - Number(latestGaze.resultScore) : null)
+    );
+
+    const behavior = normalizeMetricToPercent(
+      latestBehavioral?.behavioralMetrics?.repetitiveBehavior !== undefined
+        ? 1 - Number(latestBehavioral.behavioralMetrics.repetitiveBehavior)
+        : (latestBehavioral?.resultScore !== undefined ? 1 - Number(latestBehavioral.resultScore) : null)
+    );
+
     return [
-      { key: 'communication', label: 'Communication', value: Math.min(95, Math.round(40 + ageFactor * 45)) },
-      { key: 'social', label: 'Social Interaction', value: Math.min(90, Math.round(35 + ageFactor * 40)) },
-      { key: 'attention', label: 'Attention Span', value: Math.min(88, Math.round(30 + ageFactor * 42)) },
-      { key: 'behavior', label: 'Behavior Regulation', value: Math.min(92, Math.round(33 + ageFactor * 44)) }
+      { key: 'communication', label: 'Communication', value: communication },
+      { key: 'social', label: 'Social Interaction', value: social },
+      { key: 'attention', label: 'Attention Span', value: attention },
+      { key: 'behavior', label: 'Behavior Regulation', value: behavior }
     ];
-  }, [selectedChild]);
+  }, [childScreenings]);
 
   const recentActivities = useMemo(() => {
-    const childName = selectedChild?.name || 'your child';
-    const items = [
-      { id: 'activity-1', title: `Completed parent survey for ${childName}`, when: 'Today', icon: FaCheckCircle },
-      { id: 'activity-2', title: `Attention analysis session recorded for ${childName}`, when: 'Yesterday', icon: FaBrain },
-      { id: 'activity-3', title: 'Appointment booked with therapy specialist', when: '2 days ago', icon: FaCalendar },
-      { id: 'activity-4', title: `Development notes uploaded for ${childName}`, when: '3 days ago', icon: FaFileAlt }
-    ];
-    return items;
-  }, [selectedChild]);
+    const toRelative = (isoDate) => {
+      if (!isoDate) return 'Unknown time';
+      const now = new Date();
+      const then = new Date(isoDate);
+      const days = Math.floor((now - then) / (1000 * 60 * 60 * 24));
+      if (days <= 0) return 'Today';
+      if (days === 1) return 'Yesterday';
+      return `${days} days ago`;
+    };
+
+    return recentActivityFeed.map((activity) => ({
+      id: activity.id,
+      title: activity.message || 'Recent update',
+      when: toRelative(activity.date),
+      icon: activity.type?.includes('appointment') ? FaCalendar : FaCheckCircle
+    }));
+  }, [recentActivityFeed]);
 
   const guidanceItems = useMemo(() => ([
     {
@@ -358,21 +409,21 @@ const DashboardPage = () => {
   ]), []);
 
   const upcomingReminders = useMemo(() => {
-    const base = appointments
-      .filter((a) => a.appointmentDate || a.date)
-      .map((a) => ({
-        id: a._id || a.id,
-        title: `Therapy session: ${a.childId?.name || selectedChild?.name || 'Child'}`,
-        time: new Date(a.appointmentDate || a.date).toLocaleDateString(),
+    const now = new Date();
+
+    return appointments
+      .filter((appointment) => {
+        const rawDate = appointment.appointmentDate || appointment.date;
+        return rawDate && new Date(rawDate) >= now;
+      })
+      .sort((a, b) => new Date(a.appointmentDate || a.date) - new Date(b.appointmentDate || b.date))
+      .slice(0, 5)
+      .map((appointment) => ({
+        id: appointment._id || appointment.id,
+        title: `Therapy session: ${appointment.childId?.name || selectedChild?.name || 'Child'}`,
+        time: new Date(appointment.appointmentDate || appointment.date).toLocaleDateString(),
         type: 'session'
       }));
-
-    const fallback = [
-      { id: 'reminder-q', title: 'Questionnaire update due this week', time: 'In 2 days', type: 'questionnaire' },
-      { id: 'reminder-e', title: 'Scheduled developmental evaluation', time: 'Next Monday', type: 'evaluation' }
-    ];
-
-    return [...base, ...fallback].slice(0, 5);
   }, [appointments, selectedChild]);
 
   const motivationalMessage = useMemo(() => {
@@ -452,6 +503,147 @@ const DashboardPage = () => {
   }, []);
 
   useEffect(() => {
+    const fetchActivity = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) {
+          setRecentActivityFeed([]);
+          return;
+        }
+        const response = await fetch('http://localhost:5000/api/parent/activity', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!response.ok) throw new Error('Failed to fetch activity');
+        const data = await response.json();
+        setRecentActivityFeed(Array.isArray(data) ? data : []);
+      } catch (error) {
+        setRecentActivityFeed([]);
+      }
+    };
+
+    fetchActivity();
+  }, []);
+
+  useEffect(() => {
+    const fetchScreeningsForChild = async () => {
+      try {
+        const childId = selectedChild?._id || selectedChild?.id;
+        if (!childId) {
+          setChildScreenings([]);
+          return;
+        }
+
+        const token = localStorage.getItem('token');
+        if (!token) {
+          setChildScreenings([]);
+          return;
+        }
+
+        const response = await fetch(`http://localhost:5000/api/patients/${childId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+          setChildScreenings([]);
+          return;
+        }
+
+        const data = await response.json();
+        setChildScreenings(Array.isArray(data?.screenings) ? data.screenings : []);
+      } catch (error) {
+        setChildScreenings([]);
+      }
+    };
+
+    fetchScreeningsForChild();
+  }, [selectedChild]);
+
+  useEffect(() => {
+    const fetchLatestMoodCheckIn = async () => {
+      try {
+        const childId = selectedChild?._id || selectedChild?.id;
+        if (!childId) {
+          setMoodCheckIn(DEFAULT_MOOD_CHECKIN);
+          skipMoodAutoSaveRef.current = true;
+          return;
+        }
+
+        const token = localStorage.getItem('token');
+        if (!token) {
+          setMoodCheckIn(DEFAULT_MOOD_CHECKIN);
+          skipMoodAutoSaveRef.current = true;
+          return;
+        }
+
+        const response = await fetch(`http://localhost:5000/api/parent/mood-checkin/${childId}/latest`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+          setMoodCheckIn(DEFAULT_MOOD_CHECKIN);
+          skipMoodAutoSaveRef.current = true;
+          return;
+        }
+
+        const latest = await response.json();
+        setMoodCheckIn(
+          latest
+            ? {
+                mood: latest.mood || DEFAULT_MOOD_CHECKIN.mood,
+                attention: latest.attention || DEFAULT_MOOD_CHECKIN.attention,
+                sleep: latest.sleep || DEFAULT_MOOD_CHECKIN.sleep
+              }
+            : DEFAULT_MOOD_CHECKIN
+        );
+        skipMoodAutoSaveRef.current = true;
+      } catch (error) {
+        setMoodCheckIn(DEFAULT_MOOD_CHECKIN);
+        skipMoodAutoSaveRef.current = true;
+      }
+    };
+
+    fetchLatestMoodCheckIn();
+  }, [selectedChild]);
+
+  useEffect(() => {
+    const childId = selectedChild?._id || selectedChild?.id;
+    if (!childId) return;
+
+    if (skipMoodAutoSaveRef.current) {
+      skipMoodAutoSaveRef.current = false;
+      return;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        setIsSavingMoodCheckIn(true);
+
+        await fetch('http://localhost:5000/api/parent/mood-checkin', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            childId,
+            mood: moodCheckIn.mood,
+            attention: moodCheckIn.attention,
+            sleep: moodCheckIn.sleep
+          })
+        });
+      } catch (error) {
+        // Keep UI responsive even if save fails.
+      } finally {
+        setIsSavingMoodCheckIn(false);
+      }
+    }, 450);
+
+    return () => clearTimeout(timeoutId);
+  }, [moodCheckIn, selectedChild]);
+
+  useEffect(() => {
     if (!children.length) return;
 
     if (childIdParam) {
@@ -523,11 +715,11 @@ const DashboardPage = () => {
 
   const upcomingNotifications = useMemo(() => {
     return appointments
-      .filter(a => a.date && new Date(a.date) >= new Date())
+      .filter(a => (a.appointmentDate || a.date) && new Date(a.appointmentDate || a.date) >= new Date())
       .slice(0, 5)
       .map(a => ({
         id: a._id || a.id,
-        text: `Appointment with Dr. ${a.doctorName || a.doctor || 'Doctor'} on ${new Date(a.date).toLocaleDateString()}`,
+        text: `Appointment with Dr. ${a.therapistId?.username || a.doctorName || a.doctor || 'Doctor'} on ${new Date(a.appointmentDate || a.date).toLocaleDateString()}`,
       }));
   }, [appointments]);
 
@@ -888,6 +1080,9 @@ const DashboardPage = () => {
                     <FaMoon /> Sleep: {moodCheckIn.sleep}
                   </div>
                 </div>
+                <p className="mt-3 text-xs text-gray-400">
+                  {isSavingMoodCheckIn ? 'Saving check-in...' : 'Check-in is saved automatically for this child.'}
+                </p>
               </div>
 
               <div className="bg-white rounded-xl shadow-md p-6">
@@ -912,17 +1107,22 @@ const DashboardPage = () => {
                     <div key={milestone.key}>
                       <div className="flex justify-between text-sm mb-1">
                         <span className="text-gray-700 font-medium">{milestone.label}</span>
-                        <span className="text-gray-500">{milestone.value}%</span>
+                        <span className="text-gray-500">{milestone.value === null ? 'N/A' : `${milestone.value}%`}</span>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-2.5">
                         <div
                           className="bg-gradient-to-r from-blue-400 to-cyan-500 h-2.5 rounded-full"
-                          style={{ width: `${milestone.value}%` }}
+                          style={{ width: `${milestone.value || 0}%` }}
                         />
                       </div>
                     </div>
                   ))}
                 </div>
+                {developmentMilestones.every((milestone) => milestone.value === null) && (
+                  <p className="text-xs text-gray-400 mt-3">
+                    No screening metrics available yet for this child.
+                  </p>
+                )}
               </div>
 
               <div className="bg-white rounded-xl shadow-md p-6">
@@ -940,6 +1140,9 @@ const DashboardPage = () => {
                       </div>
                     );
                   })}
+                  {recentActivities.length === 0 && (
+                    <p className="text-sm text-gray-500">No recent activity yet.</p>
+                  )}
                 </div>
               </div>
             </div>
