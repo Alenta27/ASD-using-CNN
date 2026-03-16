@@ -12,6 +12,8 @@ const Report = require('../models/report');
 const Appointment = require('../models/appointment');
 const Slot = require('../models/slot');
 const MoodCheckIn = require('../models/MoodCheckIn');
+const CareTeamMember = require('../models/CareTeamMember');
+const ParentTherapistQuery = require('../models/ParentTherapistQuery');
 
 // Initialize Razorpay
 const razorpay = new Razorpay({
@@ -212,6 +214,25 @@ router.get('/children', verifyToken, async (req, res) => {
   }
 });
 
+// Get a single child linked to this parent (convenience endpoint)
+router.get('/child', verifyToken, async (req, res) => {
+  try {
+    const child = await Patient.findOne({ parent_id: req.user.id });
+    if (!child) {
+      return res.status(404).json({ message: 'No child linked to this parent found' });
+    }
+    res.json({
+      id: child._id,
+      name: child.name,
+      age: child.age,
+      gender: child.gender
+    });
+  } catch (error) {
+    console.error('GET /child - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // Add a new child
 router.post('/children', verifyToken, async (req, res) => {
   try {
@@ -326,6 +347,272 @@ router.get('/therapists', async (req, res) => {
     res.json(therapists);
   } catch (error) {
     console.error('GET /therapists - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get care team for a specific child
+router.get('/care-team', verifyToken, async (req, res) => {
+  try {
+    const { childId } = req.query;
+
+    if (!childId) {
+      return res.status(400).json({ message: 'childId is required' });
+    }
+
+    const child = await Patient.findOne({ _id: childId, parent_id: req.user.id }).select('_id');
+    if (!child) {
+      return res.status(404).json({ message: 'Child not found or access denied.' });
+    }
+
+    const careTeam = await CareTeamMember.find({
+      parentId: req.user.id,
+      childId,
+      isActive: true
+    }).sort({ createdAt: -1 });
+
+    res.json(careTeam);
+  } catch (error) {
+    console.error('GET /care-team - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Add therapist to care team for a child
+router.post('/care-team', verifyToken, async (req, res) => {
+  try {
+    const { childId, therapistId } = req.body;
+
+    if (!childId || !therapistId) {
+      return res.status(400).json({ message: 'childId and therapistId are required' });
+    }
+
+    const child = await Patient.findOne({ _id: childId, parent_id: req.user.id }).select('name');
+    if (!child) {
+      return res.status(404).json({ message: 'Child not found or access denied.' });
+    }
+
+    const therapist = await User.findOne({
+      _id: therapistId,
+      role: 'therapist',
+      $and: [
+        {
+          $or: [
+            { status: 'approved' },
+            { status: 'Active' },
+            { status: 'active' },
+            { status: { $exists: false } },
+            { status: null }
+          ]
+        },
+        {
+          $or: [
+            { isActive: { $ne: false } },
+            { isActive: { $exists: false } },
+            { isActive: null }
+          ]
+        }
+      ]
+    }).select('username email specialty phone');
+
+    if (!therapist) {
+      return res.status(404).json({ message: 'Therapist not found or not available.' });
+    }
+
+    const existing = await CareTeamMember.findOne({
+      parentId: req.user.id,
+      childId,
+      therapistId: therapist._id
+    });
+
+    if (existing && existing.isActive) {
+      // Return the existing record so clients can reconcile stale UI state.
+      return res.status(200).json(existing);
+    }
+
+    // If provider was previously removed (soft delete), reactivate it.
+    if (existing && !existing.isActive) {
+      existing.isActive = true;
+      existing.name = therapist.username || therapist.email;
+      existing.role = 'Therapist';
+      existing.specialty = therapist.specialty || existing.specialty || 'ASD Therapy & Support';
+      existing.location = existing.location || 'CORTEXA Therapy Center';
+      existing.phone = therapist.phone || existing.phone || '(555) 000-0000';
+      existing.email = therapist.email;
+      await existing.save();
+
+      return res.status(200).json(existing);
+    }
+
+    const careTeamMember = await CareTeamMember.create({
+      parentId: req.user.id,
+      childId,
+      therapistId: therapist._id,
+      name: therapist.username || therapist.email,
+      role: 'Therapist',
+      specialty: therapist.specialty || 'ASD Therapy & Support',
+      location: 'CORTEXA Therapy Center',
+      phone: therapist.phone || '(555) 000-0000',
+      email: therapist.email
+    });
+
+    res.status(201).json(careTeamMember);
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ message: 'Provider is already in this child\'s care team.' });
+    }
+    console.error('POST /care-team - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Update care team provider details
+router.put('/care-team/:memberId', verifyToken, async (req, res) => {
+  try {
+    const { memberId } = req.params;
+    const { name, role, specialty, location, phone, email } = req.body;
+
+    const member = await CareTeamMember.findOne({
+      _id: memberId,
+      parentId: req.user.id,
+      isActive: true
+    });
+
+    if (!member) {
+      return res.status(404).json({ message: 'Care team member not found.' });
+    }
+
+    member.name = name || member.name;
+    member.role = role || member.role;
+    member.specialty = specialty || member.specialty;
+    member.location = location || member.location;
+    member.phone = phone || member.phone;
+    member.email = email || member.email;
+
+    await member.save();
+    res.json(member);
+  } catch (error) {
+    console.error('PUT /care-team/:memberId - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Remove provider from care team (soft delete)
+router.delete('/care-team/:memberId', verifyToken, async (req, res) => {
+  try {
+    const { memberId } = req.params;
+
+    const member = await CareTeamMember.findOne({
+      _id: memberId,
+      parentId: req.user.id,
+      isActive: true
+    });
+
+    if (!member) {
+      return res.status(404).json({ message: 'Care team member not found.' });
+    }
+
+    member.isActive = false;
+    await member.save();
+
+    res.json({ message: 'Provider removed from care team.' });
+  } catch (error) {
+    console.error('DELETE /care-team/:memberId - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Send secure message from parent to therapist via care team
+router.post('/care-team/:memberId/messages', verifyToken, async (req, res) => {
+  try {
+    const { memberId } = req.params;
+    const { childId, subject, message } = req.body;
+
+    if (!subject || !message) {
+      return res.status(400).json({ message: 'Subject and message are required.' });
+    }
+
+    const member = await CareTeamMember.findOne({
+      _id: memberId,
+      parentId: req.user.id,
+      isActive: true
+    });
+
+    if (!member) {
+      return res.status(404).json({ message: 'Care team member not found.' });
+    }
+
+    // Child must match selected child if provided
+    if (childId && String(member.childId) !== String(childId)) {
+      return res.status(400).json({ message: 'Care team member does not belong to selected child.' });
+    }
+
+    const child = await Patient.findOne({ _id: member.childId, parent_id: req.user.id }).select('_id');
+    if (!child) {
+      return res.status(404).json({ message: 'Child not found or access denied.' });
+    }
+
+    const query = await ParentTherapistQuery.create({
+      parentId: req.user.id,
+      childId: member.childId,
+      therapistId: member.therapistId,
+      careTeamMemberId: member._id,
+      subject: String(subject).trim(),
+      message: String(message).trim(),
+      status: 'unread'
+    });
+
+    res.status(201).json({
+      message: 'Secure message sent successfully.',
+      query
+    });
+  } catch (error) {
+    console.error('POST /care-team/:memberId/messages - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get message/query history (including therapist replies) for a child
+router.get('/care-team/messages', verifyToken, async (req, res) => {
+  try {
+    const { childId } = req.query;
+
+    if (!childId) {
+      return res.status(400).json({ message: 'childId is required' });
+    }
+
+    const child = await Patient.findOne({ _id: childId, parent_id: req.user.id }).select('_id');
+    if (!child) {
+      return res.status(404).json({ message: 'Child not found or access denied.' });
+    }
+
+    const messages = await ParentTherapistQuery.find({
+      parentId: req.user.id,
+      childId
+    })
+      .populate('careTeamMemberId', 'name role email')
+      .sort({ createdAt: -1 })
+      .limit(200);
+
+    const normalized = messages.map((item) => ({
+      _id: item._id,
+      subject: item.subject,
+      message: item.message,
+      status: item.status,
+      readAt: item.readAt,
+      createdAt: item.createdAt,
+      provider: {
+        _id: item.careTeamMemberId?._id,
+        name: item.careTeamMemberId?.name || 'Therapist',
+        role: item.careTeamMemberId?.role || 'Therapist',
+        email: item.careTeamMemberId?.email || null,
+      },
+      replies: Array.isArray(item.replies) ? item.replies : []
+    }));
+
+    res.json(normalized);
+  } catch (error) {
+    console.error('GET /care-team/messages - Error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -523,23 +810,45 @@ router.delete('/appointments/:appointmentId', verifyToken, async (req, res) => {
 // Get recent activity for parent
 router.get('/activity', verifyToken, async (req, res) => {
   try {
-    const appointments = await Appointment.find({ parentId: req.user.id })
-      .populate('childId', 'name')
-      .sort({ createdAt: -1 })
-      .limit(10);
+    const [appointments, messages] = await Promise.all([
+      Appointment.find({ parentId: req.user.id })
+        .populate('childId', 'name')
+        .sort({ createdAt: -1 })
+        .limit(10),
+      ParentTherapistQuery.find({ parentId: req.user.id, status: 'replied' })
+        .populate('childId', 'name')
+        .populate('careTeamMemberId', 'name')
+        .sort({ updatedAt: -1 })
+        .limit(10)
+    ]);
     
-    const activity = appointments.map(apt => ({
+    const appointmentActivity = appointments.map(apt => ({
       id: apt._id,
       type: 'appointment_booked',
-      message: `Appointment booked for ${apt.childId.name}`,
+      message: `Appointment booked for ${apt.childId?.name || 'Child'}`,
       date: apt.createdAt,
-      childId: apt.childId._id,
-      childName: apt.childId.name,
+      childId: apt.childId?._id,
+      childName: apt.childId?.name,
       status: apt.status
     }));
+
+    const messageActivity = messages.map(msg => ({
+      id: msg._id,
+      type: 'therapist_reply',
+      message: `New reply from ${msg.careTeamMemberId?.name || 'Therapist'} for ${msg.childId?.name || 'Child'}`,
+      date: msg.updatedAt,
+      childId: msg.childId?._id,
+      childName: msg.childId?.name,
+      subject: msg.subject
+    }));
     
-    res.json(activity);
+    const combinedActivity = [...appointmentActivity, ...messageActivity]
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 10);
+
+    res.json(combinedActivity);
   } catch (error) {
+    console.error('GET /activity - Error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });

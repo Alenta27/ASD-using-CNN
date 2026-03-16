@@ -165,12 +165,28 @@ try {
   console.error('Subscription Routes Error:', e.message);
 }
 
+// ✅ Screening Routes
+try {
+  app.use('/api/screening', require('./routes/screening'));
+  console.log('✅ Screening Routes Registered');
+} catch (e) {
+  console.error('Screening Routes Error:', e.message);
+}
+
 // ✅ Patient Management Routes (NEW - Multimodal System)
 try {
   app.use('/api/patients', require('./routes/patients'));
   console.log('✅ Patient Management Routes Registered');
 } catch (e) {
   console.error('Patient Routes Error:', e.message);
+}
+
+// ✅ Attention Game Results Routes
+try {
+  app.use('/api/attention-results', require('./routes/attentionResults'));
+  console.log('✅ Attention Results Routes Registered');
+} catch (e) {
+  console.error('Attention Results Routes Error:', e.message);
 }
 
 // ✅ MRI Scan Model: accept file upload and return stub JSON

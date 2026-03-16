@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { FaUserPlus, FaUserEdit, FaTrash, FaUsers, FaLightbulb, FaHeart, FaHome, FaCalendar, FaChartLine, FaUserTie, FaBook, FaCog, FaBell, FaSearch, FaBrain, FaCheckCircle, FaArrowRight, FaMoon, FaSmile, FaExternalLinkAlt, FaFileAlt } from 'react-icons/fa';
+import { FaUserPlus, FaUserEdit, FaTrash, FaUsers, FaLightbulb, FaHeart, FaHome, FaCalendar, FaChartLine, FaUserTie, FaBook, FaCog, FaBell, FaSearch, FaBrain, FaCheckCircle, FaArrowRight, FaMoon, FaSmile, FaInfoCircle, FaExternalLinkAlt, FaFileAlt } from 'react-icons/fa';
 import { FiLogOut } from 'react-icons/fi';
 import SurveyInsights from '../components/SurveyInsights';
 
@@ -277,6 +277,8 @@ const DashboardPage = () => {
   const [recentActivityFeed, setRecentActivityFeed] = useState([]);
   const [childScreenings, setChildScreenings] = useState([]);
   const [isSavingMoodCheckIn, setIsSavingMoodCheckIn] = useState(false);
+  const [recentDoctorReplies, setRecentDoctorReplies] = useState([]);
+  const [isLoadingDoctorReplies, setIsLoadingDoctorReplies] = useState(false);
 
   const searchRef = useRef(null);
   const notificationRef = useRef(null);
@@ -346,6 +348,35 @@ const DashboardPage = () => {
       { key: 'behavior', label: 'Behavior Regulation', value: behavior }
     ];
   }, [childScreenings]);
+
+  const getRecommendedTest = (age) => {
+    if (age >= 1.33 && age <= 2.5) {
+      return { 
+        name: 'M-CHAT-R/F', 
+        description: 'The Modified Checklist for Autism in Toddlers is a validated developmental screening tool for toddlers between 16 and 30 months of age.' 
+      };
+    } else if (age >= 1 && age <= 5) {
+      return { 
+        name: 'SACS-R', 
+        description: 'Social Attention and Communication Surveillance is used for identifying infants and toddlers at risk for autism (12-60 months).' 
+      };
+    } else if (age > 5 && age < 16) {
+      return { 
+        name: 'SCSQ', 
+        description: 'The Social Challenges Screening Questionnaire is designed for school-age children to identify social and communication challenges.' 
+      };
+    } else if (age >= 16) {
+      return { 
+        name: 'AQ Test', 
+        description: 'The Autism Spectrum Quotient is a diagnostic questionnaire designed to measure autistic traits in adults and adolescents.' 
+      };
+    } else {
+      return { 
+        name: 'SACS-R', 
+        description: 'Standard social communication surveillance for young children.' 
+      };
+    }
+  };
 
   const recentActivities = useMemo(() => {
     const toRelative = (isoDate) => {
@@ -559,6 +590,75 @@ const DashboardPage = () => {
   }, [selectedChild]);
 
   useEffect(() => {
+    const fetchDoctorReplies = async () => {
+      try {
+        const childId = selectedChild?._id || selectedChild?.id;
+        console.log('fetchDoctorReplies - selectedChildId:', childId);
+        
+        if (!childId) {
+          setRecentDoctorReplies([]);
+          return;
+        }
+
+        const token = localStorage.getItem('token');
+        if (!token) {
+          console.warn('fetchDoctorReplies - No token found');
+          setRecentDoctorReplies([]);
+          return;
+        }
+
+        setIsLoadingDoctorReplies(true);
+        console.log('fetchDoctorReplies - Fetching from:', `http://localhost:5000/api/parent/care-team/messages?childId=${childId}`);
+        
+        const response = await fetch(`http://localhost:5000/api/parent/care-team/messages?childId=${childId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+          console.error('fetchDoctorReplies - Response not OK:', response.status);
+          setRecentDoctorReplies([]);
+          return;
+        }
+
+        const payload = await response.json();
+        console.log('fetchDoctorReplies - Payload received:', payload);
+        
+        const messages = Array.isArray(payload)
+          ? payload
+          : (Array.isArray(payload?.messages) ? payload.messages : []);
+
+        console.log('fetchDoctorReplies - Processed messages count:', messages.length);
+
+        const replies = messages
+          .flatMap((entry) => {
+            const threadReplies = Array.isArray(entry?.replies) ? entry.replies : [];
+            return threadReplies
+              .filter((reply) => reply?.senderRole === 'therapist')
+              .map((reply) => ({
+                id: `${entry._id}-${reply.createdAt || Math.random()}`,
+                subject: entry.subject || 'No subject',
+                message: reply.message || '',
+                createdAt: reply.createdAt,
+                providerName: entry?.provider?.name || 'Doctor'
+              }));
+          })
+          .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+          .slice(0, 5);
+
+        console.log('fetchDoctorReplies - Filtered replies count:', replies.length);
+        setRecentDoctorReplies(replies);
+      } catch (error) {
+        console.error('fetchDoctorReplies - Error:', error);
+        setRecentDoctorReplies([]);
+      } finally {
+        setIsLoadingDoctorReplies(false);
+      }
+    };
+
+    fetchDoctorReplies();
+  }, [selectedChild]);
+
+  useEffect(() => {
     const fetchLatestMoodCheckIn = async () => {
       try {
         const childId = selectedChild?._id || selectedChild?.id;
@@ -659,6 +759,16 @@ const DashboardPage = () => {
     }
   }, [childIdParam, children, selectedChild]);
 
+  useEffect(() => {
+    const selectedId = (selectedChild?._id || selectedChild?.id)?.toString();
+    if (selectedId) {
+      localStorage.setItem('selectedChildId', selectedId);
+    }
+    if (selectedChild?.name) {
+      localStorage.setItem('selectedChildName', selectedChild.name);
+    }
+  }, [selectedChild]);
+
   const handleAddClick = () => {
     setEditingChild(null);
     setIsModalOpen(true);
@@ -714,20 +824,33 @@ const DashboardPage = () => {
   const parentInitial = parentName?.[0]?.toUpperCase() || 'P';
 
   const upcomingNotifications = useMemo(() => {
-    return appointments
+    const appointmentNotifs = appointments
       .filter(a => (a.appointmentDate || a.date) && new Date(a.appointmentDate || a.date) >= new Date())
-      .slice(0, 5)
       .map(a => ({
         id: a._id || a.id,
         text: `Appointment with Dr. ${a.therapistId?.username || a.doctorName || a.doctor || 'Doctor'} on ${new Date(a.appointmentDate || a.date).toLocaleDateString()}`,
+        type: 'appointment',
+        date: new Date(a.appointmentDate || a.date)
       }));
-  }, [appointments]);
+
+    const replyNotifs = recentDoctorReplies.map(r => ({
+      id: r.id,
+      text: `New message from ${r.providerName}: ${r.subject}`,
+      type: 'reply',
+      date: new Date(r.createdAt)
+    }));
+
+    return [...appointmentNotifs, ...replyNotifs]
+      .sort((a, b) => b.date - a.date)
+      .slice(0, 8);
+  }, [appointments, recentDoctorReplies]);
 
   const navItems = useMemo(() => (
     [
       { id: 'dashboard', label: 'Dashboard', icon: FaHome, path: '/dashboard' },
       { id: 'appointments', label: 'Appointments', icon: FaCalendar, path: '/parent/appointments' },
       { id: 'screening', label: 'Start Screening', icon: FaChartLine, path: '/parent/screening-results' },
+      { id: 'autism-screening', label: 'Autism Screening', icon: FaCheckCircle, path: '/parent/autism-screening' },
       { id: 'attention', label: 'Attention Analysis', icon: FaBrain, path: '/parent/attention-analysis' },
       { id: 'care-team', label: 'Care Team', icon: FaUserTie, path: '/parent/care-team' },
       { id: 'resources', label: 'Resources', icon: FaBook, path: '/parent/resources' },
@@ -784,7 +907,11 @@ const DashboardPage = () => {
                 key={item.id}
                 onClick={() => {
                   setActiveNav(item.id);
-                  navigate(item.path);
+                  const childId = selectedChild?._id || selectedChild?.id;
+                  const path = childId && item.id !== 'dashboard' && item.id !== 'settings'
+                    ? `${item.path}${item.path.includes('?') ? '&' : '?'}childId=${childId}`
+                    : item.path;
+                  navigate(path);
                 }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                   activeNav === item.id
@@ -1001,7 +1128,7 @@ const DashboardPage = () => {
                     <FaArrowRight size={12} />
                   </button>
                   <button
-                    onClick={() => { setActiveNav('attention'); navigate('/parent/attention-analysis'); }}
+                    onClick={() => { setActiveNav('attention'); navigate(`/parent/attention-analysis${selectedChild ? `?childId=${selectedChild._id || selectedChild.id}` : ''}`); }}
                     className="w-full flex items-center justify-between px-4 py-3 bg-cyan-50 text-cyan-800 rounded-lg hover:bg-cyan-100 transition font-semibold text-sm"
                   >
                     <span>Start Attention Analysis</span>
@@ -1024,6 +1151,122 @@ const DashboardPage = () => {
                 </div>
               </div>
             </div>
+
+            {/* Recent Doctor Replies - Prominent Location */}
+            {recentDoctorReplies.length > 0 && (
+              <div className="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-xl shadow-md p-6 border border-blue-100">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                      <FaBell />
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-800">New Messages from Doctor</h3>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setActiveNav('care-team');
+                      navigate(`/parent/care-team${selectedChild ? `?childId=${selectedChild._id || selectedChild.id}` : ''}`);
+                    }}
+                    className="text-sm text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1"
+                  >
+                    View All Messages <FaArrowRight size={10} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {recentDoctorReplies.map((reply) => (
+                    <div key={reply.id} className="bg-white p-4 rounded-xl border border-blue-100 shadow-sm hover:shadow-md transition cursor-pointer"
+                      onClick={() => {
+                        setActiveNav('care-team');
+                        navigate(`/parent/care-team${selectedChild ? `?childId=${selectedChild._id || selectedChild.id}` : ''}`);
+                      }}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider bg-blue-50 px-2 py-0.5 rounded">Therapist Reply</span>
+                        <span className="text-[10px] text-gray-400">{reply.createdAt ? new Date(reply.createdAt).toLocaleDateString() : 'Recent'}</span>
+                      </div>
+                      <p className="text-sm font-bold text-gray-800 truncate mb-1">{reply.subject}</p>
+                      <p className="text-xs text-gray-600 line-clamp-2 italic">"{reply.message}"</p>
+                      <div className="mt-3 flex items-center gap-2 pt-2 border-t border-gray-50">
+                        <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-[10px] font-bold text-blue-600">
+                          {reply.providerName?.[0] || 'D'}
+                        </div>
+                        <span className="text-[11px] font-semibold text-gray-500">{reply.providerName}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Autism Screening Section */}
+            {selectedChild && (
+              <div className="bg-white rounded-xl shadow-md p-6 border-l-4 border-blue-500">
+                <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+                  <div>
+                    <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                      <FaCheckCircle className="text-blue-600" />
+                      Autism Screening
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-1">Recommended test based on {selectedChild.name}'s profile</p>
+                  </div>
+                  <div className="bg-blue-50 text-blue-800 px-4 py-2 rounded-lg font-bold text-sm border border-blue-100">
+                    Recommended: {getRecommendedTest(selectedChild.age).name}
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="lg:col-span-2">
+                    <div className="bg-gray-50 p-5 rounded-xl border border-gray-100">
+                      <h4 className="font-bold text-gray-800 mb-2">About this assessment</h4>
+                      <p className="text-gray-600 text-sm leading-relaxed mb-4">
+                        {getRecommendedTest(selectedChild.age).description}
+                      </p>
+                      <div className="flex flex-wrap gap-4">
+                        <button 
+                          onClick={() => {
+                            setActiveNav('autism-screening');
+                            navigate(`/parent/autism-screening?childId=${selectedChild._id || selectedChild.id}`);
+                          }}
+                          className="px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition font-bold shadow-lg shadow-blue-200 flex items-center gap-2"
+                        >
+                          Start {getRecommendedTest(selectedChild.age).name}
+                          <FaArrowRight size={14} />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setActiveNav('screening');
+                            navigate('/parent/screening-results');
+                          }}
+                          className="px-6 py-3 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition font-semibold"
+                        >
+                          View History
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-5 rounded-xl border border-blue-100">
+                    <h4 className="font-bold text-blue-800 mb-3 flex items-center gap-2">
+                      <FaInfoCircle className="text-blue-500" />
+                      Important Note
+                    </h4>
+                    <p className="text-xs text-blue-700 leading-relaxed mb-4 italic">
+                      "This screening tool is not a medical diagnosis. It only identifies possible developmental concerns. Please consult a qualified healthcare professional."
+                    </p>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-xs text-blue-800">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-400"></div>
+                        <span>Takes about 5-10 minutes</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-blue-800">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-400"></div>
+                        <span>Results available immediately</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Mood Check-in + Upcoming Reminders */}
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -1289,11 +1532,48 @@ const DashboardPage = () => {
                       }).length}
                     </p>
                   </div>
-                  <div className="p-4 bg-gradient-to-r from-green-50 to-green-100 rounded-lg">
-                    <p className="text-sm text-gray-600 mb-1">Profile Status</p>
-                    <p className="text-sm font-semibold text-green-800">Active</p>
-                  </div>
                 </div>
+
+                {/* Screening Results Summary Card */}
+                {selectedChild && (
+                  <div className="mt-8 border-t pt-6">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4">Screening History</h3>
+                    <div className="space-y-3">
+                      {['M-CHAT-R/F', 'SACS-R', 'SCSQ', 'AQ Test'].map(type => {
+                        const result = findLatestScreeningByType(type);
+                        return (
+                          <div key={type} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
+                            <div>
+                              <p className="text-xs font-bold text-gray-700">{type}</p>
+                              <p className="text-[11px] text-gray-500">
+                                {result ? new Date(result.createdAt).toLocaleDateString() : 'Not taken'}
+                              </p>
+                            </div>
+                            {result ? (
+                              <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+                                result.resultLabel?.includes('High') ? 'bg-red-100 text-red-700' :
+                                result.resultLabel?.includes('Medium') || result.resultLabel?.includes('Moderate') ? 'bg-orange-100 text-orange-700' :
+                                'bg-green-100 text-green-700'
+                              }`}>
+                                {result.resultLabel}
+                              </span>
+                            ) : (
+                              <button 
+                                onClick={() => {
+                                  setActiveNav('autism-screening');
+                                  navigate(`/parent/autism-screening?childId=${selectedChild._id || selectedChild.id}`);
+                                }}
+                                className="text-[10px] text-blue-600 hover:underline font-bold"
+                              >
+                                Take Now
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

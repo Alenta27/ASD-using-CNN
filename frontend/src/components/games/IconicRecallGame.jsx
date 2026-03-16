@@ -10,6 +10,7 @@ const IconicRecallGame = ({ onComplete, onExit }) => {
   const [attempts, setAttempts] = useState(0);
   const [mistakes, setMistakes] = useState(0);
   const [startTime, setStartTime] = useState(null);
+  const [sessionStartTime, setSessionStartTime] = useState(null);
   const [reactionTimes, setReactionTimes] = useState([]);
   const [feedbackMessage, setFeedbackMessage] = useState('');
   const [showFeedback, setShowFeedback] = useState(false);
@@ -37,14 +38,15 @@ const IconicRecallGame = ({ onComplete, onExit }) => {
     setIconSequence(sequence);
     setUserSelection([]);
     setGameState('memorize');
-    setStartTime(Date.now());
+    if (level === 1 && !sessionStartTime) setSessionStartTime(Date.now());
 
     setTimeout(() => {
       setGameState('select');
+      setStartTime(Date.now());
     }, 2000 + level * 500);
   };
 
-  const handleIconClick = (icon) => {
+const handleIconClick = (icon) => {
     const newSelection = [...userSelection, icon];
     setUserSelection(newSelection);
 
@@ -56,10 +58,12 @@ const IconicRecallGame = ({ onComplete, onExit }) => {
   const checkAnswer = (selection) => {
     const endTime = Date.now();
     const reactionTime = (endTime - startTime) / 1000;
-    setReactionTimes([...reactionTimes, reactionTime]);
+    const newReactionTimes = [...reactionTimes, reactionTime];
+    setReactionTimes(newReactionTimes);
 
     const correct = selection.every((icon, idx) => icon.id === iconSequence[idx].id);
-    setAttempts(attempts + 1);
+    const newAttempts = attempts + 1;
+    setAttempts(newAttempts);
 
     if (correct) {
       setScore(score + level * 10);
@@ -67,11 +71,12 @@ const IconicRecallGame = ({ onComplete, onExit }) => {
         setLevel(level + 1);
         setTimeout(startGame, 1000);
       } else {
-        showResults();
+        showResults(newReactionTimes, newAttempts, mistakes);
       }
     } else {
-      setMistakes(mistakes + 1);
-      if (attempts < 4) {
+      const newMistakes = mistakes + 1;
+      setMistakes(newMistakes);
+      if (newAttempts < 5) { // Fixed attempts count check
         setFeedbackMessage('❌ Incorrect! Try again.');
         setShowFeedback(true);
         setTimeout(() => {
@@ -79,18 +84,17 @@ const IconicRecallGame = ({ onComplete, onExit }) => {
           setTimeout(startGame, 500);
         }, 1500);
       } else {
-        showResults();
+        showResults(newReactionTimes, newAttempts, newMistakes);
       }
     }
   };
 
-  const showResults = () => {
+  const showResults = (currentReactionTimes, totalAttempts, finalMistakes) => {
     setGameState('results');
 
-    const totalAttempts = attempts + 1;
-    const accuracy = ((totalAttempts - mistakes) / totalAttempts) * 100;
-    const avgReactionTime = reactionTimes.reduce((a, b) => a + b, 0) / reactionTimes.length;
-    const completionTime = (Date.now() - startTime) / 1000;
+    const accuracy = ((totalAttempts - finalMistakes) / totalAttempts) * 100;
+    const avgReactionTime = currentReactionTimes.reduce((a, b) => a + b, 0) / currentReactionTimes.length;
+    const completionTime = (Date.now() - (sessionStartTime || startTime)) / 1000;
 
     const attentionScore = (accuracy * 0.6) + ((100 - Math.min(avgReactionTime * 10, 100)) * 0.4);
 
@@ -104,7 +108,9 @@ const IconicRecallGame = ({ onComplete, onExit }) => {
       accuracy: Math.round(accuracy),
       reactionTime: avgReactionTime.toFixed(2),
       completionTime: completionTime.toFixed(2),
-      mistakes,
+      mistakes: finalMistakes,
+      reactionRounds: currentReactionTimes.map((rt, idx) => ({ round: `R${idx + 1}`, reactionTime: rt })),
+      focusRounds: currentReactionTimes.map((rt, idx) => ({ round: `R${idx + 1}`, focus: Math.max(30, Math.min(100, 100 - (rt * 10))) })),
       attentionScore: Math.round(attentionScore),
       attentionLevel
     };

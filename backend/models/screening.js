@@ -12,14 +12,14 @@ const screeningSchema = new mongoose.Schema({
   screeningId: { type: String, unique: true, required: false, sparse: true },
   screeningType: { 
     type: String, 
-    enum: ['facial', 'mri', 'questionnaire', 'behavioral', 'gaze', 'speech', 'voice'], 
+    enum: ['facial', 'mri', 'questionnaire', 'behavioral', 'gaze', 'speech', 'voice', 'M-CHAT-R/F', 'SACS-R', 'SCSQ', 'AQ Test'], 
     required: true,
     index: true
   },
   
   // Results - NEW multimodal fields
   resultScore: { type: Number, required: false, min: 0, max: 1 }, // Probability score (0-1)
-  resultLabel: { type: String, enum: ['ASD', 'No ASD', 'Low Risk', 'Moderate Risk', 'High Risk'], required: false },
+  resultLabel: { type: String, enum: ['ASD', 'No ASD', 'Low Risk', 'Medium Risk', 'Moderate Risk', 'High Risk'], required: false },
   confidenceScore: { type: Number, required: false, min: 0, max: 1 }, // Model confidence
   
   // Legacy result field (backward compatibility)

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   FaBook,
   FaBell,
@@ -58,14 +58,95 @@ import AttentionAnalysisResults from '../components/AttentionAnalysisResults';
 
 const AttentionAnalysisPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const childId = searchParams.get('childId');
+  const persistedChildId = localStorage.getItem('selectedChildId');
+  const persistedChildName = localStorage.getItem('selectedChildName') || '';
+  const resolvedChildId = childId || persistedChildId || '';
+  const gameParam = searchParams.get('game');
   const [activeNav, setActiveNav] = useState('attention');
   const [activeGame, setActiveGame] = useState(null);
-  const [childName, setChildName] = useState('');
+  const [childName, setChildName] = useState(persistedChildName);
+  const [currentChildId, setCurrentChildId] = useState(resolvedChildId);
   const [parentInfo, setParentInfo] = useState({ name: '', email: '' });
   const [gameHistory, setGameHistory] = useState([]);
   const [selectedReport, setSelectedReport] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const isResultMode = location.pathname.endsWith('/result') || location.pathname.endsWith('/results');
+  const isPlayMode = location.pathname.endsWith('/play');
+
+  useEffect(() => {
+    if (resolvedChildId && resolvedChildId !== currentChildId) {
+      setCurrentChildId(resolvedChildId);
+    }
+  }, [resolvedChildId, currentChildId]);
+
+  useEffect(() => {
+    if (isPlayMode && gameParam) {
+      setActiveGame(gameParam);
+    } else if (isResultMode && gameParam && currentChildId) {
+      // 1. Try to get result from session storage first (fresh from game session)
+      const freshResult = sessionStorage.getItem('lastAttentionResult');
+      if (freshResult) {
+        try {
+          const parsed = JSON.parse(freshResult);
+          const parsedChildId = (parsed.childId || '').toString();
+          const matchesGame = parsed.gameType === gameParam || parsed.gameId === gameParam;
+          const matchesChild = !currentChildId || parsedChildId === currentChildId.toString();
+
+          if (matchesGame && matchesChild) {
+            console.log('Using fresh result from session storage');
+            setSelectedReport(parsed);
+            if (parsed.childName) {
+              setChildName(parsed.childName);
+            }
+            setLoading(false);
+            // Clear it so it doesn't persist forever
+            sessionStorage.removeItem('lastAttentionResult');
+            return;
+          }
+        } catch (e) {
+          console.error('Error parsing fresh result:', e);
+        }
+      }
+
+      // 2. If we already have a report for this game and it's fresh (from a game session), don't fetch
+      if (
+        selectedReport &&
+        (selectedReport.gameType === gameParam || selectedReport.gameId === gameParam) &&
+        (!currentChildId || (selectedReport.childId || '').toString() === currentChildId.toString())
+      ) {
+        console.log('Using optimistic report, skipping fetch');
+        setLoading(false);
+      } else {
+        fetchLatestResult(gameParam);
+      }
+    } else {
+      setActiveGame(null);
+    }
+  }, [isPlayMode, isResultMode, gameParam, currentChildId, selectedReport?.gameId, selectedReport?.gameType, selectedReport?.childId]);
+
+  const fetchLatestResult = async (gameType) => {
+    if (!currentChildId) return;
+    setLoading(true);
+    const token = localStorage.getItem('token');
+    try {
+      const response = await fetch(`http://localhost:5000/api/attention-results?childId=${currentChildId}&gameType=${gameType}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSelectedReport(data);
+      } else if (response.status === 404) {
+        setSelectedReport(null);
+      }
+    } catch (error) {
+      console.error('Error fetching latest result:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     const fetchParentInfo = async () => {
@@ -93,20 +174,34 @@ const AttentionAnalysisPage = () => {
 
   useEffect(() => {
     const fetchChildInfo = async () => {
-      if (!childId) return;
-      
       const token = localStorage.getItem('token');
       if (!token) return;
       
       try {
+        // Always fetch children and resolve active child with priority: URL -> persisted -> first child
         const response = await fetch('http://localhost:5000/api/parent/children', {
           headers: { Authorization: `Bearer ${token}` }
         });
+        
         if (response.ok) {
-          const children = await response.json();
-          const child = children.find(c => (c._id || c.id) === childId);
+          const data = await response.json();
+          let child = null;
+
+          if (Array.isArray(data) && data.length > 0) {
+            const targetId = (resolvedChildId || '').toString();
+            child = data.find(c => (c._id || c.id)?.toString() === targetId) || data[0];
+          }
+          
           if (child) {
+            const normalizedChildId = (child._id || child.id)?.toString();
             setChildName(child.name);
+            setCurrentChildId(normalizedChildId);
+            if (normalizedChildId) {
+              localStorage.setItem('selectedChildId', normalizedChildId);
+            }
+            if (child.name) {
+              localStorage.setItem('selectedChildName', child.name);
+            }
           }
         }
       } catch (error) {
@@ -115,23 +210,25 @@ const AttentionAnalysisPage = () => {
     };
 
     fetchChildInfo();
-  }, [childId]);
+  }, [resolvedChildId]);
 
   useEffect(() => {
     const fetchGameHistory = async () => {
-      if (!childId) return;
+      if (!currentChildId) return;
       
       const token = localStorage.getItem('token');
       if (!token) return;
       
       try {
-        const response = await fetch(`http://localhost:5000/api/parent/attention-games/history/${childId}`, {
+        // Use the new API or keep the history API
+        const response = await fetch(`http://localhost:5000/api/parent/attention-games/history/${currentChildId}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (response.ok) {
           const data = await response.json();
           setGameHistory(data);
-          if (!selectedReport && Array.isArray(data) && data.length > 0) {
+          // Only set selectedReport if not in result mode (which fetches its own)
+          if (!location.pathname.endsWith('/result') && !location.pathname.endsWith('/results') && !selectedReport && Array.isArray(data) && data.length > 0) {
             setSelectedReport(data[0]);
           }
         }
@@ -141,7 +238,7 @@ const AttentionAnalysisPage = () => {
     };
 
     fetchGameHistory();
-  }, [childId, selectedReport]);
+  }, [currentChildId, location.pathname]);
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: FaHome, path: '/dashboard' },
@@ -248,54 +345,60 @@ const AttentionAnalysisPage = () => {
   ];
 
   const handleGameComplete = async (gameId, results) => {
-    if (!childId) return;
+    // 1. Immediately update UI to show results (Optimistic Update)
+    const game = games.find(g => g.id === gameId);
+    const reportData = {
+      ...results,
+      gameType: gameId,
+      gameId,
+      childId: currentChildId,
+      childName: childName || persistedChildName || 'Child',
+      gameName: game ? game.name : results.gameName,
+      playedAt: new Date().toISOString()
+    };
+    
+    setSelectedReport(reportData);
+    setActiveGame(null);
+    
+    // Save to session storage to persist across navigation/unmount
+    sessionStorage.setItem('lastAttentionResult', JSON.stringify(reportData));
 
+    // 2. Perform background save if possible
+    if (!currentChildId) return;
     const token = localStorage.getItem('token');
-    if (!token) {
-      setSelectedReport({
-        ...results,
-        gameId,
-        playedAt: new Date().toISOString()
-      });
-      setActiveGame(null);
-      return;
-    }
+    if (!token) return;
 
     try {
-      const response = await fetch('http://localhost:5000/api/parent/attention-games/result', {
+      const response = await fetch('http://localhost:5000/api/attention-results', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          childId,
-          gameId,
-          ...results
+          childId: currentChildId,
+          gameType: gameId,
+          ...results,
+          gameName: game ? game.name : results.gameName // Ensure gameName is sent
         })
       });
 
       if (response.ok) {
         const savedResult = await response.json();
-        setGameHistory(prev => [savedResult, ...prev]);
-        setSelectedReport(savedResult);
-      } else {
-        setSelectedReport({
-          ...results,
-          gameId,
-          playedAt: new Date().toISOString()
-        });
+        // Use the saved result but keep our gameId/gameType just in case
+        const fullResult = { ...reportData, ...savedResult };
+        setSelectedReport(fullResult);
+        setGameHistory(prev => [fullResult, ...prev]);
+        
+        // Update session storage with full result (with ID)
+        sessionStorage.setItem('lastAttentionResult', JSON.stringify(fullResult));
+        
+        // Redirect to results page
+        navigate(`/parent/attention-analysis/result?game=${gameId}${currentChildId ? `&childId=${currentChildId}` : ''}`);
       }
     } catch (error) {
-      console.error('Error saving game result:', error);
-      setSelectedReport({
-        ...results,
-        gameId,
-        playedAt: new Date().toISOString()
-      });
+      console.error('Background save failed:', error);
     }
-
-    setActiveGame(null);
   };
 
   const categories = ['Memory', 'Logic', 'Focus'];
@@ -395,19 +498,23 @@ const AttentionAnalysisPage = () => {
     const baseRt = Number(selectedReport.reactionTime || 1.2);
     const baseFocus = Number(reportMetrics.indicators.find((i) => i.key === 'stability')?.value || 50);
 
-    const reactionRounds = rounds.map((round) => {
-      const trend = (round - 5) * 0.02;
-      const wave = Math.sin((round + Number(selectedReport.score || 0)) * 0.8) * 0.08;
-      const reaction = clamp(Number((baseRt + trend + wave).toFixed(2)), 0.35, 3.2);
-      return { round: `R${round}`, reactionTime: reaction };
-    });
+    const reactionRounds = (selectedReport.reactionRounds && selectedReport.reactionRounds.length > 0)
+      ? selectedReport.reactionRounds
+      : rounds.map((round) => {
+          const trend = (round - 5) * 0.05;
+          const wave = Math.sin((round + Number(selectedReport.score || 0)) * 0.8) * 0.2;
+          const reaction = clamp(Number((baseRt + trend + wave).toFixed(2)), 0.35, Math.max(3.2, baseRt + 1));
+          return { round: `R${round}`, reactionTime: reaction };
+        });
 
-    const focusRounds = rounds.map((round, index) => {
-      const wave = Math.cos((round + Number(selectedReport.mistakes || 0)) * 0.7) * 9;
-      const slope = (index - 4) * 1.5;
-      const focus = clamp(Math.round(baseFocus + wave - slope), 25, 98);
-      return { round: `R${round}`, focus };
-    });
+    const focusRounds = (selectedReport.focusRounds && selectedReport.focusRounds.length > 0)
+      ? selectedReport.focusRounds
+      : rounds.map((round, index) => {
+          const wave = Math.cos((round + Number(selectedReport.mistakes || 0)) * 0.7) * 9;
+          const slope = (index - 4) * 1.5;
+          const focus = clamp(Math.round(baseFocus + wave - slope), 25, 98);
+          return { round: `R${round}`, focus };
+        });
 
     const accuracyValue = clamp(Number(selectedReport.accuracy || 0), 0, 100);
     const accuracyPie = [
@@ -556,7 +663,7 @@ const AttentionAnalysisPage = () => {
                 key={item.id}
                 onClick={() => {
                   setActiveNav(item.id);
-                  navigate(item.path + (childId ? `?childId=${childId}` : ''));
+                  navigate(item.path + (currentChildId ? `?childId=${currentChildId}` : ''));
                 }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                   activeNav === item.id
@@ -615,7 +722,7 @@ const AttentionAnalysisPage = () => {
         {/* Content Area */}
         <div className="flex-1 overflow-auto">
           <div className="p-8 space-y-8">
-            {selectedReport && reportMetrics ? (
+            {isResultMode && selectedReport && reportMetrics ? (
               <AttentionAnalysisResults 
                 data={{
                   score: selectedReport.score,
@@ -625,11 +732,12 @@ const AttentionAnalysisPage = () => {
                   attentionScore: reportMetrics.summary.attentionScore,
                   reactionRounds: chartData.reactionRounds
                 }}
-                childName={childName || "Alex Johnson"}
+                childName={childName || selectedReport.childName || persistedChildName || "Child"}
+                gameName={games.find(g => g.id === (selectedReport.gameType || selectedReport.gameId))?.name || selectedReport.gameName || "Attention Test"}
                 sessionDate={new Date(selectedReport.playedAt || Date.now()).toLocaleDateString()}
-                testDuration={selectedReport.completionTime ? `${Math.floor(selectedReport.completionTime / 60)}m ${Math.round(selectedReport.completionTime % 60)}s` : "4m 12s"}
+                testDuration={selectedReport.completionTime ? `${Math.floor(selectedReport.completionTime / 60)}m ${Math.round(selectedReport.completionTime % 60)}s` : "0m 0s"}
                 onPlayAgain={playAgain}
-                onReturnHome={() => navigate(`/dashboard${childId ? `?childId=${childId}` : ''}`)}
+                onReturnHome={() => navigate(`/dashboard${currentChildId ? `?childId=${currentChildId}` : ''}`)}
                 onDownload={downloadReport}
               />
             ) : (
@@ -685,7 +793,7 @@ const AttentionAnalysisPage = () => {
                         return (
                           <div
                             key={game.id}
-                            onClick={() => setActiveGame(game.id)}
+                            onClick={() => navigate(`/parent/attention-analysis/play?game=${game.id}${currentChildId ? `&childId=${currentChildId}` : ''}`)}
                             className="cursor-pointer bg-white border-2 border-gray-200 rounded-2xl p-6 hover:shadow-xl hover:border-blue-300 transition-all transform hover:-translate-y-1"
                           >
                             <div className={`w-16 h-16 bg-gradient-to-br ${game.color} rounded-2xl flex items-center justify-center mb-4 shadow-lg`}>

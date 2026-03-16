@@ -12,6 +12,7 @@ const DREAMFeatures = require('../models/dreamFeatures');
 const Screening = require('../models/screening');
 const BehavioralAssessment = require('../models/BehavioralAssessment');
 const CombinedASDReport = require('../models/CombinedASDReport');
+const ParentTherapistQuery = require('../models/ParentTherapistQuery');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -66,6 +67,219 @@ router.get('/clients', requireResourceAccess('children'), async (req, res) => {
     res.json(clients);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get secure parent queries/messages for therapist
+router.get('/parent-queries', async (req, res) => {
+  try {
+    const { status } = req.query;
+    const filter = { therapistId: req.user.id };
+
+    if (status && ['unread', 'read', 'replied'].includes(String(status).toLowerCase())) {
+      filter.status = String(status).toLowerCase();
+    }
+
+    const queries = await ParentTherapistQuery.find(filter)
+      .populate('parentId', 'username email')
+      .populate('childId', 'name age')
+      .populate('careTeamMemberId', 'name role email')
+      .sort({ createdAt: -1 })
+      .limit(100);
+
+    const normalized = queries.map((item) => ({
+      _id: item._id,
+      subject: item.subject,
+      message: item.message,
+      replies: Array.isArray(item.replies) ? item.replies : [],
+      status: item.status,
+      readAt: item.readAt,
+      createdAt: item.createdAt,
+      parent: {
+        _id: item.parentId?._id,
+        name: item.parentId?.username || item.parentId?.email || 'Unknown Parent',
+        email: item.parentId?.email || null,
+      },
+      child: {
+        _id: item.childId?._id,
+        name: item.childId?.name || 'Unknown Child',
+        age: item.childId?.age,
+      },
+      provider: {
+        _id: item.careTeamMemberId?._id,
+        name: item.careTeamMemberId?.name || 'Care Team Provider',
+        role: item.careTeamMemberId?.role || 'Therapist',
+        email: item.careTeamMemberId?.email || null,
+      }
+    }));
+
+    res.json(normalized);
+  } catch (error) {
+    console.error('GET /parent-queries - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get grouped parent query sessions (threaded by parent + child)
+router.get('/query-sessions', async (req, res) => {
+  try {
+    const queries = await ParentTherapistQuery.find({ therapistId: req.user.id })
+      .populate('parentId', 'username email')
+      .populate('childId', 'name age')
+      .populate('careTeamMemberId', 'name role email')
+      .sort({ createdAt: -1 })
+      .limit(500);
+
+    const sessionMap = new Map();
+
+    for (const item of queries) {
+      const parentId = item.parentId?._id ? String(item.parentId._id) : 'unknown-parent';
+      const childId = item.childId?._id ? String(item.childId._id) : 'unknown-child';
+      const key = `${parentId}:${childId}`;
+
+      if (!sessionMap.has(key)) {
+        sessionMap.set(key, {
+          sessionId: key,
+          parent: {
+            _id: item.parentId?._id,
+            name: item.parentId?.username || item.parentId?.email || 'Unknown Parent',
+            email: item.parentId?.email || null,
+          },
+          child: {
+            _id: item.childId?._id,
+            name: item.childId?.name || 'Unknown Child',
+            age: item.childId?.age,
+          },
+          unreadCount: 0,
+          latestMessageAt: item.createdAt,
+          latestSubject: item.subject,
+          messages: [],
+        });
+      }
+
+      const session = sessionMap.get(key);
+      if (item.status === 'unread') {
+        session.unreadCount += 1;
+      }
+
+      session.messages.push({
+        _id: item._id,
+        subject: item.subject,
+        message: item.message,
+        replies: Array.isArray(item.replies) ? item.replies : [],
+        status: item.status,
+        readAt: item.readAt,
+        createdAt: item.createdAt,
+        provider: {
+          _id: item.careTeamMemberId?._id,
+          name: item.careTeamMemberId?.name || 'Care Team Provider',
+          role: item.careTeamMemberId?.role || 'Therapist',
+          email: item.careTeamMemberId?.email || null,
+        }
+      });
+    }
+
+    const sessions = Array.from(sessionMap.values())
+      .map((session) => ({
+        ...session,
+        // Keep session messages sorted oldest -> newest for chat-like display.
+        messages: session.messages.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      }))
+      .sort((a, b) => new Date(b.latestMessageAt) - new Date(a.latestMessageAt));
+
+    res.json(sessions);
+  } catch (error) {
+    console.error('GET /query-sessions - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Therapist reply to a parent query message
+router.put('/parent-queries/:queryId/reply', async (req, res) => {
+  try {
+    const { queryId } = req.params;
+    const { message } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(queryId)) {
+      return res.status(400).json({ message: 'Invalid query id.' });
+    }
+
+    if (!message || !String(message).trim()) {
+      return res.status(400).json({ message: 'Reply message is required.' });
+    }
+
+    const query = await ParentTherapistQuery.findById(queryId)
+      .populate('careTeamMemberId', 'therapistId email');
+
+    if (!query) {
+      return res.status(404).json({ message: 'Parent query not found.' });
+    }
+
+    const ownsByQueryTherapist = query.therapistId && String(query.therapistId) === String(req.user.id);
+    const ownsByCareTeamTherapist =
+      query.careTeamMemberId?.therapistId &&
+      String(query.careTeamMemberId.therapistId) === String(req.user.id);
+
+    if (!ownsByQueryTherapist && !ownsByCareTeamTherapist) {
+      return res.status(403).json({ message: 'Access denied for this parent query.' });
+    }
+
+    query.replies = Array.isArray(query.replies) ? query.replies : [];
+    query.replies.push({
+      senderRole: 'therapist',
+      senderId: req.user.id,
+      message: String(message).trim(),
+      createdAt: new Date()
+    });
+
+    query.status = 'replied';
+    if (!query.readAt) {
+      query.readAt = new Date();
+    }
+
+    await query.save();
+    res.json({ message: 'Reply sent successfully.', query });
+  } catch (error) {
+    console.error('PUT /parent-queries/:queryId/reply - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Mark a parent query as read
+router.put('/parent-queries/:queryId/read', async (req, res) => {
+  try {
+    const { queryId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(queryId)) {
+      return res.status(400).json({ message: 'Invalid query id.' });
+    }
+
+    const query = await ParentTherapistQuery.findById(queryId)
+      .populate('careTeamMemberId', 'therapistId email');
+
+    if (!query) {
+      return res.status(404).json({ message: 'Parent query not found.' });
+    }
+
+    const ownsByQueryTherapist = query.therapistId && String(query.therapistId) === String(req.user.id);
+    const ownsByCareTeamTherapist =
+      query.careTeamMemberId?.therapistId &&
+      String(query.careTeamMemberId.therapistId) === String(req.user.id);
+
+    if (!ownsByQueryTherapist && !ownsByCareTeamTherapist) {
+      return res.status(403).json({ message: 'Access denied for this parent query.' });
+    }
+
+    if (query.status === 'unread') {
+      query.status = 'read';
+      query.readAt = new Date();
+      await query.save();
+    }
+
+    res.json({ message: 'Query marked as read.', query });
+  } catch (error) {
+    console.error('PUT /parent-queries/:queryId/read - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 

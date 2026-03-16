@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FiHome, FiUsers, FiFileText, FiSettings, FiLogOut, FiCalendar, FiHelpCircle, FiX } from 'react-icons/fi';
+import { FiHome, FiUsers, FiFileText, FiSettings, FiLogOut, FiCalendar, FiHelpCircle, FiX, FiBell, FiMessageSquare } from 'react-icons/fi';
 import ProgressTracker from '../components/ProgressTracker';
 import './TherapistDashboard.css';
 
@@ -10,6 +10,7 @@ const Sidebar = ({ activeNav, onNavClick, onLogout, therapistName }) => {
     { id: 'patients', label: 'My Patients', icon: FiUsers, path: '/therapist/patients' },
     { id: 'schedule', label: 'Schedule', icon: FiCalendar, path: '/therapist/schedule' },
     { id: 'appointments', label: 'My Appointments', icon: FiCalendar, path: '/therapist/appointments' },
+    { id: 'query-sessions', label: 'Query Sessions', icon: FiMessageSquare, path: '/therapist/query-sessions' },
     { id: 'slots', label: 'Manage Slots', icon: FiCalendar, path: '/therapist/slots' },
     { id: 'screening', label: 'Screening Results', icon: FiFileText, path: '/therapist/questionnaires' },
     { id: 'gaze', label: 'Live Gaze Analysis', icon: FiUsers, path: '/therapist/gaze-sessions' },
@@ -50,8 +51,19 @@ const Sidebar = ({ activeNav, onNavClick, onLogout, therapistName }) => {
   );
 };
 
-const MainContent = ({ username, therapistName, appointments, clients, loading, onOpenAssistant, navigate }) => {
+const MainContent = ({
+  username,
+  therapistName,
+  appointments,
+  clients,
+  parentQueries,
+  loading,
+  onMarkQueryRead,
+  onOpenAssistant,
+  navigate,
+}) => {
   const [selectedActivityPatient, setSelectedActivityPatient] = useState(null);
+  const [showNotifications, setShowNotifications] = useState(false);
   
   const upcomingAppointments = Array.isArray(appointments) 
     ? appointments.filter(a => a.status === 'Scheduled' || a.status === 'Pending').slice(0, 3)
@@ -66,6 +78,12 @@ const MainContent = ({ username, therapistName, appointments, clients, loading, 
       }))
     : [];
 
+  const unreadCount = Array.isArray(parentQueries)
+    ? parentQueries.filter((query) => query.status === 'unread').length
+    : 0;
+
+  const notificationItems = Array.isArray(parentQueries) ? parentQueries.slice(0, 6) : [];
+
   return (
     <div className="main-content">
       <div className="main-header">
@@ -73,10 +91,56 @@ const MainContent = ({ username, therapistName, appointments, clients, loading, 
           <h1 className="welcome-title">Welcome {username || 'User'}!</h1>
           <p className="welcome-subtitle">Manage your patients and appointments efficiently</p>
         </div>
-        <button className="assistant-trigger" onClick={onOpenAssistant}>
-          <FiHelpCircle className="assistant-trigger-icon" />
-          Guide & Support
-        </button>
+        <div className="header-actions">
+          <div className="notifications-wrapper">
+            <button
+              className="notification-trigger"
+              onClick={() => setShowNotifications((prev) => !prev)}
+              aria-label="Open parent message notifications"
+            >
+              <FiBell className="notification-trigger-icon" />
+              {unreadCount > 0 && <span className="notification-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
+            </button>
+
+            {showNotifications && (
+              <div className="notification-dropdown">
+                <div className="notification-dropdown-header">
+                  <h4>Parent Messages</h4>
+                  <span>{unreadCount} unread</span>
+                </div>
+
+                {notificationItems.length === 0 ? (
+                  <div className="notification-empty">No parent messages yet.</div>
+                ) : (
+                  <div className="notification-list">
+                    {notificationItems.map((query) => (
+                      <button
+                        key={query._id}
+                        className={`notification-item ${query.status === 'unread' ? 'unread' : ''}`}
+                        onClick={() => {
+                          if (query.status === 'unread') {
+                            onMarkQueryRead(query._id);
+                          }
+                          setShowNotifications(false);
+                        }}
+                      >
+                        <div className="notification-item-subject">{query.subject}</div>
+                        <div className="notification-item-meta">
+                          {query.parent?.name || 'Parent'} - {query.child?.name || 'Child'}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <button className="assistant-trigger" onClick={onOpenAssistant}>
+            <FiHelpCircle className="assistant-trigger-icon" />
+            Guide & Support
+          </button>
+        </div>
       </div>
 
       <div className="banner">
@@ -172,6 +236,48 @@ const MainContent = ({ username, therapistName, appointments, clients, loading, 
         </div>
       </div>
 
+      <div className="content-section">
+        <div className="section-header">
+          <h2 className="section-title">Parent Queries</h2>
+        </div>
+
+        <div className="activity-grid">
+          {loading ? (
+            <div className="loading-message">Loading parent queries...</div>
+          ) : !Array.isArray(parentQueries) || parentQueries.length === 0 ? (
+            <div className="empty-message">No parent queries yet</div>
+          ) : (
+            parentQueries.slice(0, 4).map((query) => (
+              <div key={query._id} className="activity-card">
+                <div className="activity-header">
+                  <h3 className="activity-patient-name">{query.subject}</h3>
+                  <p className="activity-type">
+                    {query.parent?.name || 'Parent'} • {query.child?.name || 'Child'}
+                  </p>
+                </div>
+                <div className="appointment-details" style={{ marginTop: '8px' }}>
+                  <p className="appointment-notes" style={{ margin: 0 }}>
+                    {query.message}
+                  </p>
+                </div>
+                <div className="activity-footer" style={{ marginTop: '12px' }}>
+                  <p className="activity-date">
+                    {new Date(query.createdAt).toLocaleString()}
+                  </p>
+                  {query.status === 'unread' ? (
+                    <button className="activity-action-btn" onClick={() => onMarkQueryRead(query._id)}>
+                      Mark Read
+                    </button>
+                  ) : (
+                    <span className="appointment-type">Read</span>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       {/* Progress Tracker Section */}
       <div className="content-section">
         <ProgressTracker childId="current-patient" childName="Your Patient" />
@@ -187,6 +293,7 @@ export default function TherapistDashboard() {
   const [therapistName, setTherapistName] = useState('');
   const [clients, setClients] = useState([]);
   const [appointments, setAppointments] = useState([]);
+  const [parentQueries, setParentQueries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAssistant, setShowAssistant] = useState(false);
   const [assistantMessages, setAssistantMessages] = useState([]);
@@ -217,13 +324,15 @@ export default function TherapistDashboard() {
           setTherapistName(profileData.lastName || profileData.name || '');
         }
 
-        const [clientsRes, appointmentsRes] = await Promise.all([
+        const [clientsRes, appointmentsRes, queriesRes] = await Promise.all([
           fetch('http://localhost:5000/api/therapist/clients', { headers }),
           fetch('http://localhost:5000/api/therapist/appointments', { headers }),
+          fetch('http://localhost:5000/api/therapist/parent-queries', { headers }),
         ]);
 
         let clientsData = [];
         let appointmentsData = [];
+        let queriesData = [];
 
         if (clientsRes.ok) {
           clientsData = await clientsRes.json();
@@ -238,11 +347,18 @@ export default function TherapistDashboard() {
           console.error('Appointments fetch failed:', appointmentsRes.status, appointmentsRes.statusText);
         }
 
+        if (queriesRes.ok) {
+          queriesData = await queriesRes.json();
+        } else {
+          console.error('Parent queries fetch failed:', queriesRes.status, queriesRes.statusText);
+        }
+
         console.log('TherapistDashboard - clientsData:', clientsData);
         console.log('TherapistDashboard - appointmentsData:', appointmentsData);
         
         setClients(Array.isArray(clientsData) ? clientsData : []);
         setAppointments(Array.isArray(appointmentsData) ? appointmentsData : []);
+        setParentQueries(Array.isArray(queriesData) ? queriesData : []);
       } catch (error) {
         console.error('Error fetching therapist data:', error);
       } finally {
@@ -258,6 +374,7 @@ export default function TherapistDashboard() {
       '/therapist': 'dashboard',
       '/therapist/patients': 'patients',
       '/therapist/appointments': 'appointments',
+      '/therapist/query-sessions': 'query-sessions',
       '/therapist/slots': 'slots',
       '/therapist/questionnaires': 'screening',
     };
@@ -270,6 +387,35 @@ export default function TherapistDashboard() {
     localStorage.clear();
     // Navigate to home page instead of login
     navigate('/');
+  };
+
+  const handleMarkQueryRead = async (queryId) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      const response = await fetch(`http://localhost:5000/api/therapist/parent-queries/${queryId}/read`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      setParentQueries((prev) =>
+        prev.map((query) =>
+          query._id === queryId
+            ? { ...query, status: 'read', readAt: new Date().toISOString() }
+            : query
+        )
+      );
+    } catch (error) {
+      console.error('Error marking query as read:', error);
+    }
   };
 
   const therapyGuidance = {
@@ -451,7 +597,9 @@ Creating Sensory-Friendly Spaces:
         therapistName={therapistName}
         appointments={appointments}
         clients={clients}
+        parentQueries={parentQueries}
         loading={loading}
+        onMarkQueryRead={handleMarkQueryRead}
         onOpenAssistant={openAssistant}
         navigate={navigate}
       />

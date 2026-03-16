@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { BrainCircuit } from 'lucide-react';
 
 const ChronoCodeGame = ({ onComplete, onExit }) => {
   const [gameState, setGameState] = useState('instructions'); // instructions, memorize, input, results
@@ -9,6 +10,7 @@ const ChronoCodeGame = ({ onComplete, onExit }) => {
   const [attempts, setAttempts] = useState(0);
   const [mistakes, setMistakes] = useState(0);
   const [startTime, setStartTime] = useState(null);
+  const [sessionStartTime, setSessionStartTime] = useState(null);
   const [reactionTimes, setReactionTimes] = useState([]);
   const [feedbackMessage, setFeedbackMessage] = useState('');
   const [showFeedback, setShowFeedback] = useState(false);
@@ -25,20 +27,23 @@ const ChronoCodeGame = ({ onComplete, onExit }) => {
     const newSequence = generateSequence(3 + level);
     setSequence(newSequence);
     setGameState('memorize');
-    setStartTime(Date.now());
+    if (level === 1 && !sessionStartTime) setSessionStartTime(Date.now());
     
     setTimeout(() => {
       setGameState('input');
+      setStartTime(Date.now());
     }, 2000 + level * 500); // Show sequence for longer on higher levels
   };
 
   const handleSubmit = () => {
     const endTime = Date.now();
     const reactionTime = (endTime - startTime) / 1000;
-    setReactionTimes([...reactionTimes, reactionTime]);
+    const newReactionTimes = [...reactionTimes, reactionTime];
+    setReactionTimes(newReactionTimes);
     
     const correct = userInput === sequence.join('');
-    setAttempts(attempts + 1);
+    const newAttempts = attempts + 1;
+    setAttempts(newAttempts);
     
     if (correct) {
       setScore(score + level * 10);
@@ -47,11 +52,12 @@ const ChronoCodeGame = ({ onComplete, onExit }) => {
         setUserInput('');
         startGame();
       } else {
-        showResults();
+        showResults(newReactionTimes, newAttempts, mistakes);
       }
     } else {
-      setMistakes(mistakes + 1);
-      if (attempts < 4) {
+      const newMistakes = mistakes + 1;
+      setMistakes(newMistakes);
+      if (newAttempts < 5) { // Fixed attempts check
         setFeedbackMessage('❌ Incorrect! Try again.');
         setShowFeedback(true);
         setTimeout(() => {
@@ -60,18 +66,17 @@ const ChronoCodeGame = ({ onComplete, onExit }) => {
           startGame();
         }, 1500);
       } else {
-        showResults();
+        showResults(newReactionTimes, newAttempts, newMistakes);
       }
     }
   };
 
-  const showResults = () => {
+  const showResults = (currentReactionTimes, totalAttempts, finalMistakes) => {
     setGameState('results');
     
-    const totalAttempts = attempts + 1;
-    const accuracy = ((totalAttempts - mistakes) / totalAttempts) * 100;
-    const avgReactionTime = reactionTimes.reduce((a, b) => a + b, 0) / reactionTimes.length;
-    const completionTime = (Date.now() - startTime) / 1000;
+    const accuracy = ((totalAttempts - finalMistakes) / totalAttempts) * 100;
+    const avgReactionTime = currentReactionTimes.reduce((a, b) => a + b, 0) / currentReactionTimes.length;
+    const completionTime = (Date.now() - (sessionStartTime || startTime)) / 1000;
     
     // Calculate attention score
     const attentionScore = (accuracy * 0.6) + ((100 - Math.min(avgReactionTime * 10, 100)) * 0.4);
@@ -87,7 +92,9 @@ const ChronoCodeGame = ({ onComplete, onExit }) => {
       accuracy: Math.round(accuracy),
       reactionTime: avgReactionTime.toFixed(2),
       completionTime: completionTime.toFixed(2),
-      mistakes,
+      mistakes: finalMistakes,
+      reactionRounds: currentReactionTimes.map((rt, idx) => ({ round: `R${idx + 1}`, reactionTime: rt })),
+      focusRounds: currentReactionTimes.map((rt, idx) => ({ round: `R${idx + 1}`, focus: Math.max(30, Math.min(100, 100 - (rt * 10))) })),
       attentionScore: Math.round(attentionScore),
       attentionLevel
     };
@@ -172,33 +179,22 @@ const ChronoCodeGame = ({ onComplete, onExit }) => {
         )}
 
         {gameState === 'results' && (
-          <div className="text-center">
-            <h2 className="text-4xl font-bold text-purple-700 mb-6">Game Complete!</h2>
-            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 mb-6">
-              <div className="grid grid-cols-2 gap-4 text-left">
-                <div>
-                  <p className="text-sm text-gray-600">Final Score</p>
-                  <p className="text-3xl font-bold text-purple-700">{score}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Accuracy</p>
-                  <p className="text-3xl font-bold text-green-700">
-                    {Math.round(((attempts + 1 - mistakes) / (attempts + 1)) * 100)}%
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Avg Reaction Time</p>
-                  <p className="text-2xl font-bold text-blue-700">
-                    {(reactionTimes.reduce((a, b) => a + b, 0) / reactionTimes.length).toFixed(2)}s
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Mistakes</p>
-                  <p className="text-2xl font-bold text-red-700">{mistakes}</p>
-                </div>
+          <div className="text-center py-12">
+            <div className="relative inline-block mb-8">
+              <div className="w-24 h-24 border-8 border-purple-100 border-t-purple-600 rounded-full animate-spin"></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <BrainCircuit className="w-10 h-10 text-purple-600" />
               </div>
             </div>
-            <p className="text-gray-600">Saving results and returning to menu...</p>
+            <h2 className="text-3xl font-black text-gray-800 mb-4 tracking-tight">Analysis in Progress...</h2>
+            <p className="text-gray-500 font-medium text-lg">
+              Generating your child's cognitive attention profile and detailed analytics.
+            </p>
+            <div className="mt-8 flex justify-center gap-2">
+              <div className="w-2 h-2 bg-purple-600 rounded-full animate-bounce duration-300"></div>
+              <div className="w-2 h-2 bg-purple-600 rounded-full animate-bounce duration-500"></div>
+              <div className="w-2 h-2 bg-purple-600 rounded-full animate-bounce duration-700"></div>
+            </div>
           </div>
         )}
       </div>

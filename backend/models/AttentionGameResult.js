@@ -6,7 +6,7 @@ const attentionGameResultSchema = new mongoose.Schema({
     ref: 'Patient',
     required: true
   },
-  gameId: {
+  gameType: {
     type: String,
     required: true,
     enum: [
@@ -20,9 +20,24 @@ const attentionGameResultSchema = new mongoose.Schema({
       'signal-switch'
     ]
   },
+  gameId: {
+    type: String,
+    // Make optional for compatibility
+    // required: true,
+    enum: [
+      'chrono-code',
+      'iconic-recall',
+      'match-mastery',
+      'numeric-shuffle',
+      'odd-one-out',
+      'pattern-match',
+      'reflex-tap',
+      'signal-switch'
+    ]
+  },
   gameName: {
     type: String,
-    required: true
+    // required: true
   },
   score: {
     type: Number,
@@ -38,7 +53,7 @@ const attentionGameResultSchema = new mongoose.Schema({
   },
   completionTime: {
     type: Number, // In seconds
-    required: true
+    // required: true
   },
   mistakes: {
     type: Number,
@@ -47,12 +62,20 @@ const attentionGameResultSchema = new mongoose.Schema({
   },
   attentionScore: {
     type: Number, // Calculated score (0-100)
-    required: true
+    // required: true
   },
   attentionLevel: {
     type: String,
-    required: true,
+    // required: true,
     enum: ['Low', 'Moderate', 'High']
+  },
+  reactionRounds: {
+    type: [Object],
+    default: []
+  },
+  focusRounds: {
+    type: [Object],
+    default: []
   },
   playedAt: {
     type: Date,
@@ -64,6 +87,7 @@ const attentionGameResultSchema = new mongoose.Schema({
 
 // Index for faster queries
 attentionGameResultSchema.index({ childId: 1, playedAt: -1 });
+attentionGameResultSchema.index({ childId: 1, gameType: 1 });
 attentionGameResultSchema.index({ childId: 1, gameId: 1 });
 
 const AttentionGameResult = mongoose.model('AttentionGameResult', attentionGameResultSchema);

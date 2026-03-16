@@ -35,6 +35,7 @@ import TherapistQuestionnairesPage from './pages/TherapistQuestionnairesPage';
 import TherapistSlotManagement from './pages/TherapistSlotManagement';
 import TherapistAppointmentsPage from './pages/TherapistAppointmentsPage';
 import TherapistSchedulePage from './pages/TherapistSchedulePage';
+import TherapistMessageSessionsPage from './pages/TherapistMessageSessionsPage';
 import ResearchUsersPage from './pages/ResearchUsersPage';
 import ResearchDatasetPage from './pages/ResearchDatasetPage';
 import LearnMorePage from './pages/LearnMorePage';
@@ -55,6 +56,7 @@ import AttentionAnalysisPage from './pages/AttentionAnalysisPage';
 import ParentCareTeamPage from './pages/ParentCareTeamPage';
 import ParentResourcesPage from './pages/ParentResourcesPage';
 import ParentSettingsPage from './pages/ParentSettingsPage';
+import AutismScreeningPage from './pages/AutismScreeningPage';
 import PaymentPage from './pages/PaymentPage';
 import FacialScreeningPage from './pages/FacialScreeningPage';
 import ScreeningCenterPage from './pages/ScreeningCenterPage';
@@ -102,6 +104,10 @@ function App() {
           <Route path="/parent/screening-results" element={<ParentScreeningResultsPage />} />
           <Route path="/parent/progress-reports" element={<ParentProgressReportsPage />} />
           <Route path="/parent/attention-analysis" element={<AttentionAnalysisPage />} />
+          <Route path="/parent/attention-analysis/play" element={<AttentionAnalysisPage />} />
+          <Route path="/parent/attention-analysis/result" element={<AttentionAnalysisPage />} />
+          <Route path="/parent/attention-analysis/results" element={<AttentionAnalysisPage />} />
+          <Route path="/parent/autism-screening" element={<AutismScreeningPage />} />
           <Route path="/parent/care-team" element={<ParentCareTeamPage />} />
           <Route path="/parent/resources" element={<ParentResourcesPage />} />
           <Route path="/parent/settings" element={<ParentSettingsPage />} />
@@ -121,6 +127,7 @@ function App() {
           <Route path="/therapist/patients" element={<TherapistPatientsPage />} />
           <Route path="/therapist/patients/:id" element={<TherapistPatientProfilePage />} />
           <Route path="/therapist/appointments" element={<TherapistAppointmentsPage />} />
+          <Route path="/therapist/query-sessions" element={<TherapistMessageSessionsPage />} />
           <Route path="/therapist/schedule" element={<TherapistSchedulePage />} />
           <Route path="/therapist/questionnaires" element={<TherapistQuestionnairesPage />} />
           <Route path="/therapist/slots" element={<TherapistSlotManagement />} />
