@@ -53,12 +53,34 @@ router.post('/parent', async (req, res) => {
   try {
     const { parentName, parentEmail, phone } = req.body;
 
+    // 1. Basic presence validation
     if (!parentName || !parentEmail) {
       return res.status(400).json({ error: 'Parent name and email are required' });
     }
 
+    // 2. Name length validation
+    if (parentName.trim().length < 3) {
+      return res.status(400).json({ error: 'Parent name must be at least 3 characters' });
+    }
+
+    // 3. Email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(parentEmail.trim())) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    // 4. Phone validation (Optional)
+    if (phone && phone.trim()) {
+      const phoneRegex = /^\+?[\d\s-]{10,15}$/;
+      if (!phoneRegex.test(phone.trim())) {
+        return res.status(400).json({ error: 'Invalid phone format (10-15 digits)' });
+      }
+    }
+
+    const normalizedEmail = parentEmail.trim().toLowerCase();
+
     // Check if parent already exists
-    let parent = await SpeechParent.findOne({ parentEmail });
+    let parent = await SpeechParent.findOne({ parentEmail: normalizedEmail });
     if (parent) {
       return res.json({
         message: 'Parent profile already exists',
@@ -69,9 +91,9 @@ router.post('/parent', async (req, res) => {
 
     // Create new parent
     parent = new SpeechParent({
-      parentName,
-      parentEmail,
-      phone: phone || ''
+      parentName: parentName.trim(),
+      parentEmail: normalizedEmail,
+      phone: phone ? phone.trim() : ''
     });
 
     await parent.save();
@@ -100,6 +122,16 @@ router.post('/child', async (req, res) => {
       return res.status(400).json({ error: 'Child name, age, and parentId are required' });
     }
 
+    // Validation
+    if (childName.trim().length < 2) {
+      return res.status(400).json({ error: 'Child name must be at least 2 characters' });
+    }
+
+    const ageNum = parseInt(age);
+    if (isNaN(ageNum) || ageNum < 1 || ageNum > 18) {
+      return res.status(400).json({ error: 'Age must be between 1 and 18' });
+    }
+
     // Verify parent exists
     const parent = await SpeechParent.findById(parentId);
     if (!parent) {
@@ -112,8 +144,8 @@ router.post('/child', async (req, res) => {
     // Create child profile
     const child = new SpeechChild({
       childId,
-      childName,
-      age: parseInt(age),
+      childName: childName.trim(),
+      age: ageNum,
       preferredLanguage: preferredLanguage || 'en-US',
       parentId,
       subscriptionExpiry: null // Initially no subscription

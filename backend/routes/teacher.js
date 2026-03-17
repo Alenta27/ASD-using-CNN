@@ -30,6 +30,25 @@ const normalizeRiskLevel = (value) => {
   if (lower === 'medium' || lower === 'moderate') return 'Medium';
   return 'Low';
 };
+
+const buildTeacherStudentQuery = (teacherUserId, legacyTeacherId) => {
+  const orConditions = [
+    { assignedTeacherId: teacherUserId },
+    { teacherId: teacherUserId }
+  ];
+
+  if (legacyTeacherId) {
+    orConditions.push({ teacherId: legacyTeacherId });
+  }
+
+  return { $or: orConditions };
+};
+
+const getTeacherStudentQuery = async (teacherUserId) => {
+  const teacher = await User.findById(teacherUserId).select('teacherId');
+  return buildTeacherStudentQuery(teacherUserId, teacher?.teacherId);
+};
+
 const fallbackScreeningTemplates = [
   { studentName: 'Manuel Saji', type: 'Parent Questionnaire', riskLevel: 'Low', assignedDate: '2025-09-10', dueDate: '2025-09-17', status: 'Completed', score: 94 },
   { studentName: 'Rohan Sharma', type: 'Classroom Observation', riskLevel: 'Low', assignedDate: '2025-09-08', dueDate: '2025-09-15', status: 'Completed', score: 90 },
@@ -62,7 +81,8 @@ router.get('/profile', async (req, res) => {
 // Get teacher's students (only students in their class)
 router.get('/students', requireResourceAccess('children'), async (req, res) => {
   try {
-    const students = await Patient.find({ assignedTeacherId: req.user.id });
+    const teacherQuery = await getTeacherStudentQuery(req.user.id);
+    const students = await Patient.find(teacherQuery);
     const formattedStudents = students.map((student) => {
       const doc = student.toObject();
       return { ...doc, submittedDate: formatDateInRange(doc.submittedDate) };
@@ -76,7 +96,8 @@ router.get('/students', requireResourceAccess('children'), async (req, res) => {
 // Get class statistics
 router.get('/class-stats', async (req, res) => {
   try {
-    const students = await Patient.find({ assignedTeacherId: req.user.id });
+    const teacherQuery = await getTeacherStudentQuery(req.user.id);
+    const students = await Patient.find(teacherQuery);
     
     const stats = {
       totalStudents: students.length,
@@ -97,8 +118,9 @@ router.get('/class-stats', async (req, res) => {
 // Get pending screenings for teacher's students
 router.get('/pending-screenings', async (req, res) => {
   try {
+    const teacherQuery = await getTeacherStudentQuery(req.user.id);
     const students = await Patient.find({ 
-      assignedTeacherId: req.user.id,
+      ...teacherQuery,
       screeningStatus: { $regex: /^pending$/i }
     });
     
@@ -161,7 +183,8 @@ router.delete('/students/:studentId', async (req, res) => {
 
 router.get('/screenings', async (req, res) => {
   try {
-    const students = await Patient.find({ assignedTeacherId: req.user.id });
+    const teacherQuery = await getTeacherStudentQuery(req.user.id);
+    const students = await Patient.find(teacherQuery);
     const screeningsFromDb = students.map((student) => {
       const assignedDate = clampDateToRange(student.createdAt || student.submittedDate || Date.now());
       const dueCandidate = new Date(assignedDate.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -260,7 +283,8 @@ router.post('/reports', async (req, res) => {
 // Get AI insights for class trends
 router.get('/insights', async (req, res) => {
   try {
-    const students = await Patient.find({ assignedTeacherId: req.user.id });
+    const teacherQuery = await getTeacherStudentQuery(req.user.id);
+    const students = await Patient.find(teacherQuery);
     
     // Mock AI insights
     const insights = {

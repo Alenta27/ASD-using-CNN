@@ -294,7 +294,8 @@ function ScreeningPage() {
                             generatedAt: Date.now(),
                         });
         } catch (err) {
-            setError('An error occurred during prediction. Please try again.');
+            const errorMessage = err.response?.data?.error || 'An error occurred during prediction. Please try again.';
+            setError(errorMessage);
             console.error(err);
         } finally {
             setIsLoading(false);

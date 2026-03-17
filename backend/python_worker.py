@@ -14,6 +14,8 @@ def main() -> int:
         return 1
 
     file_path = sys.argv[1]
+    original_filename = sys.argv[2] if len(sys.argv) > 2 else os.path.basename(file_path)
+    
     if not os.path.exists(file_path):
         print(f'{{"error": "File not found: {file_path}"}}')
         return 1
@@ -45,7 +47,7 @@ def main() -> int:
     # This is important for dependency and environment isolation
     try:
         process = subprocess.run(
-            [python_executable, predict_script_path, file_path],
+            [python_executable, predict_script_path, file_path, original_filename],
             capture_output=True,
             text=True,
             check=False  # Don't raise on non-zero exit - we'll handle it
@@ -56,9 +58,24 @@ def main() -> int:
         if process.stderr:
             print(f"WORKER_STDERR: {process.stderr}", file=sys.stderr)
         
-        # If there's stdout, print it (this is the actual prediction or error JSON)
+        # If there's stdout, try to extract JSON (it might be mixed with progress bars)
         if process.stdout:
-            print(process.stdout, end='')
+            stdout_str = process.stdout.strip()
+            # Try to find the last occurrence of { and its matching }
+            # Or just check if the whole thing is JSON
+            try:
+                # First try direct parse
+                json.loads(stdout_str)
+                print(stdout_str, end='')
+            except json.JSONDecodeError:
+                # If direct parse fails, try to find { ... } in the output
+                import re
+                json_match = re.search(r'\{.*\}', stdout_str, re.DOTALL)
+                if json_match:
+                    print(json_match.group(0), end='')
+                else:
+                    # If still not found, print it as is and let Node handle it
+                    print(stdout_str, end='')
         # If there's stderr and no stdout, wrap it as JSON error
         elif process.stderr:
             print(f'{{"error": "Python script error: {process.stderr}"}}')

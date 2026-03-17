@@ -15,7 +15,12 @@ async function getNextPatientId() {
         { $inc: { seq: 1 } },
         { new: true, upsert: true }
     );
-    const paddedNumber = String(counter.seq).padStart(3, '0');
+    
+    if (!counter) {
+        throw new Error('Failed to generate patient sequence ID');
+    }
+    
+    const paddedNumber = String(counter.seq || 0).padStart(3, '0');
     return `CORTEXA_${paddedNumber}`;
 }
 
@@ -60,10 +65,23 @@ const patientSchema = new mongoose.Schema({
     subscriptionExpiry: { type: Date, required: false },
 }, { timestamps: true });
 
-// Pre-save hook to generate CORTEXA ID
-patientSchema.pre('save', async function(next) {
+// Generate IDs before validation so `required: true` on cortexaId never fails.
+patientSchema.pre('validate', async function(next) {
     if (this.isNew && !this.cortexaId) {
-        this.cortexaId = await getNextPatientId();
+        try {
+            const generatedId = await getNextPatientId();
+            this.cortexaId = generatedId;
+
+            // Keep legacy ID fields populated for older code paths.
+            if (!this.patient_id) {
+                this.patient_id = generatedId;
+            }
+            if (!this.patientId) {
+                this.patientId = generatedId;
+            }
+        } catch (error) {
+            return next(error);
+        }
     }
     next();
 });

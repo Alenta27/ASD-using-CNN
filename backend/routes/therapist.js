@@ -1717,7 +1717,7 @@ router.post('/appointments/complete-session', requireResourceAccess('appointment
 // Convert Guest Session to Patient
 router.post('/convert-guest-to-patient', async (req, res) => {
   try {
-    const { guestSessionId, patientName, patientAge, patientGender, additionalInfo } = req.body;
+    const { guestSessionId, patientName, patientAge, patientGender, additionalInfo, parentEmail } = req.body;
 
     if (!guestSessionId) {
       return res.status(400).json({ message: 'Guest session ID is required' });
@@ -1729,36 +1729,62 @@ router.post('/convert-guest-to-patient', async (req, res) => {
       return res.status(404).json({ message: 'Guest session not found' });
     }
 
-    if (!guestSession.isGuest) {
-      return res.status(400).json({ message: 'This is not a guest session' });
+    const hasLegacyGuestInfo = Boolean(
+      guestSession.guestInfo?.email ||
+      guestSession.guestInfo?.childName ||
+      guestSession.guestInfo?.parentName
+    );
+    const isLegacyConvertible = !guestSession.patientId && hasLegacyGuestInfo;
+
+    if (!guestSession.isGuest && !isLegacyConvertible) {
+      return res.status(400).json({ message: 'This session is already linked or cannot be converted' });
     }
 
-    // Check if patient already exists with this email
-    const existingParent = await User.findOne({ email: guestSession.guestInfo.email });
+    // Check if parent email exists in session metadata, otherwise accept fallback from request.
+    const guestEmail = (
+      guestSession.guestInfo?.email ||
+      parentEmail ||
+      ''
+    ).trim().toLowerCase();
+
+    if (!guestEmail) {
+      return res.status(400).json({
+        message: 'Guest session is missing parent email. Please provide parent email to convert this early session.'
+      });
+    }
+
+    const existingParent = await User.findOne({ email: guestEmail });
     let parentId;
 
     if (existingParent) {
+      if (existingParent.role !== 'parent') {
+        return res.status(409).json({
+          message: 'This email belongs to a non-parent account. Use a different parent email.'
+        });
+      }
       parentId = existingParent._id;
       console.log(`✅ Found existing parent: ${existingParent.email}`);
     } else {
       // Create a placeholder parent account
       const newParent = new User({
-        username: guestSession.guestInfo.parentName || 'Parent',
-        email: guestSession.guestInfo.email,
+        username: guestSession.guestInfo.parentName || guestSession.guestInfo.childName || 'Parent',
+        email: guestEmail,
         role: 'parent',
         status: 'approved',
         isActive: true
       });
       await newParent.save();
       parentId = newParent._id;
-      console.log(`✅ Created new parent account: ${guestSession.guestInfo.email}`);
+      console.log(`✅ Created new parent account: ${guestEmail}`);
     }
+
+    const parsedAge = Number.parseInt(patientAge, 10);
 
     // Create patient profile
     const newPatient = new Patient({
-      name: patientName || guestSession.guestInfo.childName,
-      age: patientAge || 0,
-      gender: patientGender || 'Not specified',
+      name: patientName || guestSession.guestInfo.childName || 'Guest Child',
+      age: Number.isInteger(parsedAge) && parsedAge > 0 ? parsedAge : 5,
+      gender: patientGender || 'Other',
       medical_history: additionalInfo || '',
       parent_id: parentId,
       therapist_user_id: req.user.id, // Assign to current therapist
@@ -1767,7 +1793,7 @@ router.post('/convert-guest-to-patient', async (req, res) => {
     });
 
     await newPatient.save();
-    console.log(`✅ Created patient: ${newPatient.name}`);
+    console.log(`✅ Created patient: ${newPatient.name} with ID ${newPatient._id}`);
 
     // Link guest session to patient
     guestSession.patientId = newPatient._id;
@@ -1776,28 +1802,42 @@ router.post('/convert-guest-to-patient', async (req, res) => {
     guestSession.sessionType = 'authenticated';
     await guestSession.save();
 
-    // Find and link all other guest sessions with same email
-    const otherGuestSessions = await GazeSession.find({
-      'guestInfo.email': guestSession.guestInfo.email,
-      isGuest: true,
-      _id: { $ne: guestSessionId }
-    });
+    let additionalLinked = 0;
+    const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const normalizedEmailRegex = new RegExp(`^${escapeRegex(guestEmail)}$`, 'i');
 
-    for (const session of otherGuestSessions) {
-      session.patientId = newPatient._id;
-      session.therapistId = req.user.id;
-      session.isGuest = false;
-      session.sessionType = 'authenticated';
-      await session.save();
+    // Find and link all other legacy/guest sessions with same email.
+    if (guestEmail) {
+      const otherGuestSessions = await GazeSession.find({
+        'guestInfo.email': normalizedEmailRegex,
+        _id: { $ne: guestSessionId }
+      });
+
+      for (const session of otherGuestSessions) {
+        try {
+          if (session.patientId) {
+            continue;
+          }
+          session.patientId = newPatient._id;
+          session.therapistId = req.user.id;
+          session.isGuest = false;
+          session.sessionType = 'authenticated';
+          await session.save();
+          additionalLinked++;
+        } catch (linkErr) {
+          console.error(`❌ Failed to link historical guest session ${session._id}:`, linkErr);
+          // Continue with others
+        }
+      }
     }
 
-    console.log(`✅ Linked ${otherGuestSessions.length} additional guest sessions to patient`);
+    console.log(`✅ Linked ${additionalLinked} additional guest sessions to patient`);
 
     res.json({
       success: true,
       message: 'Guest successfully converted to patient',
       patient: newPatient,
-      linkedSessions: otherGuestSessions.length + 1
+      linkedSessions: additionalLinked + 1
     });
 
   } catch (error) {
@@ -1826,18 +1866,19 @@ router.post('/add-patient', async (req, res) => {
     }
 
     // Check if parent exists or create new
-    let parent = await User.findOne({ email: parentEmail });
+    const emailToSearch = parentEmail.trim().toLowerCase();
+    let parent = await User.findOne({ email: emailToSearch });
     
     if (!parent) {
       parent = new User({
         username: parentName || 'Parent',
-        email: parentEmail,
+        email: emailToSearch,
         role: 'parent',
         status: 'approved',
         isActive: true
       });
       await parent.save();
-      console.log(`✅ Created new parent: ${parentEmail}`);
+      console.log(`✅ Created new parent: ${emailToSearch}`);
     }
 
     // Create patient

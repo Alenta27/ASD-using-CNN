@@ -36,6 +36,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
   const [detectionState, setDetectionState] = useState('none'); // 'none', 'partial', 'correct'
   const [confidencePct, setConfidencePct] = useState(0);
   const [actionResults, setActionResults] = useState([]);
+  const currentIndexRef = useRef(0);
 
   // Session timing
   const [sessionStartTime, setSessionStartTime] = useState(null);
@@ -152,15 +153,22 @@ const ImitationGame = ({ studentId, onComplete }) => {
   };
 
   // Phase transitions
-  const nextPhaseDemo = (nextIndex = null) => {
+  const nextPhaseDemo = (nextIndex = null, currentResults = null) => {
     // Use provided nextIndex or current state
-    const indexToUse = nextIndex !== null ? nextIndex : currentIndex;
+    const indexToUse = nextIndex !== null ? nextIndex : currentIndexRef.current;
     
     if (indexToUse >= ACTIONS.length) {
       console.log('[ImitationGame] All actions complete, finalizing results');
-      finalizeResults();
+      finalizeResults(currentResults);
       return;
     }
+    
+    // Sync current index state and ref
+    if (nextIndex !== null) {
+      currentIndexRef.current = nextIndex;
+      setCurrentIndex(nextIndex);
+    }
+    
     phaseRef.current = 'demo_action';
     setPhase('demo_action');
     setFeedbackText('Get ready...');
@@ -189,11 +197,11 @@ const ImitationGame = ({ studentId, onComplete }) => {
   };
 
   const startImitation = () => {
-    const action = ACTIONS[currentIndex];
+    const action = ACTIONS[currentIndexRef.current];
     
     // Safety check
     if (!action) {
-      console.error('[ImitationGame] No action at index', currentIndex);
+      console.error('[ImitationGame] No action at index', currentIndexRef.current);
       finalizeResults();
       return;
     }
@@ -206,7 +214,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
     setConfidencePct(0);
     processFrameLoggedRef.current = false; // Reset for new action
 
-    console.log(`[ImitationGame] Starting detection for action: ${action.id} (${action.name})`);
+    console.log(`[ImitationGame] Starting detection for action: ${action.id} (${action.name}) at index ${currentIndexRef.current}`);
 
     if (actionTimerRef.current) clearInterval(actionTimerRef.current);
     let t = action.timeLimit;
@@ -230,7 +238,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
     // Log first frame for debugging
     if (!processFrameLoggedRef.current) {
-      console.log('[ImitationGame] processFrame started, phase:', phaseRef.current);
+      console.log('[ImitationGame] processFrame started, phase:', phaseRef.current, 'currentIndex:', currentIndexRef.current);
       processFrameLoggedRef.current = true;
     }
 
@@ -249,27 +257,21 @@ const ImitationGame = ({ studentId, onComplete }) => {
           console.log('[ImitationGame] MediaPipe Raw Data Structure:', {
             pose: { 
               hasLandmarks: !!pose?.landmarks, 
-              landmarksLength: pose?.landmarks?.length,
-              firstLandmarkType: Array.isArray(pose?.landmarks?.[0]) ? 'array' : typeof pose?.landmarks?.[0]
+              landmarksLength: pose?.landmarks?.length
             },
             hands: { 
               hasLandmarks: !!hands?.landmarks, 
-              landmarksLength: hands?.landmarks?.length,
-              hasHandLandmarks: !!hands?.handLandmarks,
-              handLandmarksLength: hands?.handLandmarks?.length,
-              hasHandedness: !!hands?.handedness
+              landmarksLength: hands?.landmarks?.length
             },
             face: { 
               hasLandmarks: !!face?.landmarks, 
-              landmarksLength: face?.landmarks?.length,
-              hasBlendshapes: !!face?.faceBlendshapes,
-              blendshapesLength: face?.faceBlendshapes?.length
+              landmarksLength: face?.landmarks?.length
             },
-            currentAction: ACTIONS[currentIndex].id
+            currentAction: ACTIONS[currentIndexRef.current].id
           });
         }
 
-        const action = ACTIONS[currentIndex];
+        const action = ACTIONS[currentIndexRef.current];
         const det = detectAction(action.id, pose, hands, face);
         
         const conf = Math.max(0, Math.min(1, det.confidence || 0));
@@ -278,10 +280,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
         if (Math.random() < 0.1) { // 10% of frames for more visibility
           console.log(`[ImitationGame] ${action.id} detection result:`, {
             rawConfidence: det.confidence,
-            clampedConf: conf,
-            handsLandmarksLength: hands?.landmarks?.length || hands?.handLandmarks?.length || 0,
-            poseLandmarksLength: pose?.landmarks?.length || 0,
-            faceBlendshapesLength: face?.faceBlendshapes?.length || 0
+            clampedConf: conf
           });
         }
         
@@ -327,6 +326,12 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
   // Conclude one action and move forward
   const concludeAction = (status, finalConf) => {
+    // Safety check to prevent double-concluding the same action
+    if (phaseRef.current === 'feedback' || phaseRef.current === 'demo_action') {
+        console.warn('[ImitationGame] Action already concluding/concluded');
+        return;
+    }
+
     phaseRef.current = 'feedback';
     setPhase('feedback');
     
@@ -356,7 +361,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
     );
     setDetectionState(displayStatus === 'correct' ? 'correct' : displayStatus === 'partial' ? 'partial' : 'none');
 
-    const action = ACTIONS[currentIndex];
+    const action = ACTIONS[currentIndexRef.current];
     const result = {
       actionName: action.name,
       status: displayStatus, 
@@ -364,17 +369,18 @@ const ImitationGame = ({ studentId, onComplete }) => {
       confidenceScore: Number((actualConf || 0).toFixed(2)),
       reactionTimeMs: actionStartTime ? Date.now() - actionStartTime : 0
     };
-    setActionResults(prev => [...prev, result]);
+    
+    const updatedResults = [...actionResults, result];
+    setActionResults(updatedResults);
 
     if (actionTimerRef.current) clearInterval(actionTimerRef.current);
     actionTimerRef.current = null;
 
     // short feedback pause then next action
     setTimeout(() => {
-      const nextIndex = currentIndex + 1;
-      setCurrentIndex(nextIndex);
-      console.log(`[ImitationGame] Moving to action ${nextIndex + 1} of ${ACTIONS.length}`);
-      nextPhaseDemo(nextIndex);
+      const nextIndex = currentIndexRef.current + 1;
+      console.log(`[ImitationGame] Moving from action ${nextIndex + 1} of ${ACTIONS.length}`);
+      nextPhaseDemo(nextIndex, updatedResults);
     }, 1500);
   };
 
@@ -728,16 +734,17 @@ const ImitationGame = ({ studentId, onComplete }) => {
   };
 
   // Final aggregation and backend payload
-  const finalizeResults = () => {
-    console.log('[ImitationGame] Finalizing results with', actionResults.length, 'actions');
+  const finalizeResults = (finalResults = null) => {
+    const resultsToUse = finalResults || actionResults;
+    console.log('[ImitationGame] Finalizing results with', resultsToUse.length, 'actions');
     phaseRef.current = 'final_results';
     setPhase('final_results');
 
     const totalActions = ACTIONS.length;
-    const successfulActions = actionResults.filter(r => r.success).length;
+    const successfulActions = resultsToUse.filter(r => r.success).length;
     const imitationAccuracy = totalActions ? Math.round((successfulActions / totalActions) * 100) : 0;
-    const avgRt = actionResults.length
-      ? actionResults.reduce((s, r) => s + (r.reactionTimeMs || 0), 0) / actionResults.length
+    const avgRt = resultsToUse.length
+      ? resultsToUse.reduce((s, r) => s + (r.reactionTimeMs || 0), 0) / resultsToUse.length
       : 0;
 
     const payload = {
@@ -756,9 +763,9 @@ const ImitationGame = ({ studentId, onComplete }) => {
         correctImitations: successfulActions,
         imitationAccuracy,
         averageReactionTime: Math.round(avgRt),
-        meanSimilarityScore: Number((actionResults.reduce((s, r) => s + (r.confidenceScore || 0), 0) / (actionResults.length || 1)).toFixed(2))
+        meanSimilarityScore: Number((resultsToUse.reduce((acc, r) => acc + (r.confidenceScore || 0), 0) / (resultsToUse.length || 1)).toFixed(2))
       },
-      rawGameData: actionResults
+      rawGameData: resultsToUse
     };
 
     // Send to parent/backend
@@ -787,7 +794,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
     console.log('[ImitationGame] Action out of bounds, showing results');
     // Trigger finalize if we somehow got here
     if (actionResults.length > 0) {
-      setTimeout(() => finalizeResults(), 100);
+      setTimeout(() => finalizeResults(actionResults), 100);
     }
     return <div className="imitation-game">Loading results...</div>;
   }

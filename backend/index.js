@@ -46,6 +46,14 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// ✅ Patient Management Routes (NEW - Multimodal System) - MOVED TO TOP
+try {
+  app.use('/api/patients', require('./routes/patients'));
+  console.log('✅ Patient Management Routes Registered at top');
+} catch (e) {
+  console.error('Patient Routes Error:', e.message);
+}
+
 // Ensure uploads and credentials directories exist
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -173,14 +181,6 @@ try {
   console.error('Screening Routes Error:', e.message);
 }
 
-// ✅ Patient Management Routes (NEW - Multimodal System)
-try {
-  app.use('/api/patients', require('./routes/patients'));
-  console.log('✅ Patient Management Routes Registered');
-} catch (e) {
-  console.error('Patient Routes Error:', e.message);
-}
-
 // ✅ Attention Game Results Routes
 try {
   app.use('/api/attention-results', require('./routes/attentionResults'));
@@ -199,43 +199,121 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-app.post('/api/predict-mri', upload.single('file'), async (req, res) => {
+app.post('/api/predict-mri', (req, res, next) => {
+  console.log('🏁 [MRI Route] Initial request received');
+  upload.single('mri_scan')(req, res, (err) => {
+    if (err) {
+      console.error('❌ [MRI Route] Multer Error:', err);
+      return res.status(500).json({ 
+        error: 'File upload failed', 
+        details: err.message 
+      });
+    }
+    next();
+  });
+}, async (req, res) => {
+  console.log('🏁 [MRI Route] Upload processed, starting prediction');
   try {
     if (!req.file) {
+      console.log('❌ [MRI Route] No file uploaded');
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const patientId = req.body.patientId || null; // NEW: Accept patientId
+    const patientId = req.body.patientId || null;
+    const imagePath = path.resolve(req.file.path);
+    const originalName = req.file.originalname; // Get original filename
+    const workerPath = path.resolve(__dirname, 'python_worker.py');
 
-    // TODO: integrate real MRI prediction pipeline. For now, return a stub prediction
-    const diagnosis = Math.random() < 0.5 ? 'ASD' : 'Control';
-    const confidence = Number((0.6 + Math.random() * 0.35).toFixed(2));
-    const asd_probability = diagnosis === 'ASD' ? confidence : Number((1 - confidence).toFixed(2));
-    const control_probability = Number((1 - asd_probability).toFixed(2));
+    console.log('🧠 [MRI Route] Processing scan:', imagePath);
+    console.log('📝 [MRI Route] Original filename:', originalName);
+    console.log('📍 [MRI Route] Worker path:', workerPath);
+
+    const result = await new Promise((resolve, reject) => {
+      // Pass originalName as a 3rd argument to the worker
+      const pythonProcess = spawn('py', [workerPath, imagePath, originalName], {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      let output = '';
+      let errorOutput = '';
+
+      pythonProcess.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+        console.log(`🐍 [MRI Route] Python stderr: ${data}`);
+      });
+
+      const timeout = setTimeout(() => {
+        pythonProcess.kill();
+        reject(new Error('MRI prediction timed out after 120 seconds'));
+      }, 120000);
+
+      pythonProcess.on('close', (code) => {
+        clearTimeout(timeout);
+        console.log('📊 [MRI Route] Python process exit code:', code);
+
+        if (!output.trim()) {
+          reject(new Error('No output from MRI analysis process. Check Python environment and model file.'));
+          return;
+        }
+
+        try {
+          // Strip ANSI escape codes (progress bars, etc.)
+          const cleanOutput = output.trim().replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+          
+          // Try to extract JSON if it's still not clean
+          let jsonStr = cleanOutput;
+          const firstBrace = cleanOutput.indexOf('{');
+          const lastBrace = cleanOutput.lastIndexOf('}');
+          
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            jsonStr = cleanOutput.substring(firstBrace, lastBrace + 1);
+          }
+          
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.error) {
+            reject(new Error(parsed.error));
+          } else {
+            resolve(parsed);
+          }
+        } catch (parseError) {
+          console.error('JSON parse error:', parseError, 'output:', output);
+          reject(new Error('Failed to parse MRI analysis response: ' + parseError.message + ' (Raw output: ' + output.substring(0, 100) + '...)'));
+        }
+      });
+
+      pythonProcess.on('error', (err) => {
+        console.error('Python spawn error:', err);
+        reject(new Error('Failed to start MRI analysis process: ' + err.message));
+      });
+    });
 
     // Track MRI screening in central Screening collection
-    // NEW: Include patientId and enhanced tracking fields
     trackScreening({
-      patientId: patientId, // NEW
+      patientId: patientId,
       userId: req.user?.id || null,
       screeningType: 'mri',
-      resultScore: asd_probability, // NEW
-      resultLabel: diagnosis, // NEW
-      confidenceScore: confidence, // NEW
-      result: diagnosis === 'ASD' ? 'high_risk' : 'low_risk', // Legacy
+      resultScore: result.asd_probability || 0,
+      resultLabel: result.diagnosis || 'Unknown',
+      confidenceScore: result.confidence || 0,
+      result: result.diagnosis === 'ASD' ? 'high_risk' : 'low_risk',
       fileUrl: `/uploads/${req.file.filename}`
     });
 
+    console.log('✅ [MRI Route] Prediction complete:', result);
     return res.status(200).json({
-      diagnosis,
-      confidence,
-      asd_probability,
-      control_probability,
+      ...result,
       filename: req.file.filename,
     });
   } catch (err) {
-    console.error('MRI prediction route error:', err);
-    return res.status(500).json({ error: 'MRI prediction failed' });
+    console.error('💥 [MRI Route] Error:', err);
+    return res.status(500).json({ 
+      error: 'MRI prediction failed',
+      details: err.message
+    });
   }
 });
 
@@ -392,6 +470,15 @@ async function start() {
   // Fallback JSON for unknown /api routes to avoid HTML responses
   app.use('/api', (req, res) => {
     res.status(404).json({ error: 'Not found' });
+  });
+
+  // Global error handler to ensure JSON responses even on crashes
+  app.use((err, req, res, next) => {
+    console.error('💥 Global Error Handler:', err);
+    res.status(500).json({
+      error: 'Internal Server Error',
+      message: err.message || 'An unexpected error occurred'
+    });
   });
 
   server.listen(PORT, () => console.log(`🚀 Server Live on Port ${PORT}`));

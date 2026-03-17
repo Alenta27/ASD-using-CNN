@@ -44,6 +44,7 @@ import {
   XAxis,
   YAxis
 } from 'recharts';
+import { toast } from 'react-toastify';
 
 // Import game components (will create these next)
 import ChronoCodeGame from '../components/games/ChronoCodeGame';
@@ -389,6 +390,29 @@ const AttentionAnalysisPage = () => {
         const fullResult = { ...reportData, ...savedResult };
         setSelectedReport(fullResult);
         setGameHistory(prev => [fullResult, ...prev]);
+
+        // Store this attention outcome in the unified screening result pipeline.
+        try {
+          await fetch('http://localhost:5000/api/screening/save', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              childName: childName || persistedChildName || 'Child',
+              screeningType: 'ATTENTION',
+              scores: {
+                questionnaireScore: 0,
+                attentionScore: Number(fullResult.attentionScore || results.attentionScore || 0),
+                mriPrediction: 'Unknown'
+              }
+            })
+          });
+        } catch (screeningSaveError) {
+          console.error('Failed to save unified attention screening result:', screeningSaveError);
+          toast.error('Attention result saved, but dashboard summary sync failed.');
+        }
         
         // Update session storage with full result (with ID)
         sessionStorage.setItem('lastAttentionResult', JSON.stringify(fullResult));

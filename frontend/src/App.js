@@ -61,6 +61,8 @@ import PaymentPage from './pages/PaymentPage';
 import FacialScreeningPage from './pages/FacialScreeningPage';
 import ScreeningCenterPage from './pages/ScreeningCenterPage';
 import { cleanupExpiredSubscription } from './utils/subscriptionUtils';
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
 function App() {
   useEffect(() => {
@@ -173,6 +175,7 @@ function App() {
           {/* Fallback route */}
           <Route path="*" element={<h1 className="text-center mt-20 text-2xl">404 - Page Not Found</h1>} />
         </Routes>
+        <ToastContainer position="top-right" autoClose={3000} />
       </Router>
   );
 }

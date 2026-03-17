@@ -28,8 +28,11 @@ const ParentCareTeamPage = () => {
     email: '',
   });
   const [feedback, setFeedback] = useState(null);
+  const [threadReplyDrafts, setThreadReplyDrafts] = useState({});
 
   const childIdParam = searchParams.get('childId');
+  const queryIdParam = searchParams.get('queryId');
+  const sectionParam = searchParams.get('section');
 
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('token');
@@ -220,6 +223,54 @@ const ParentCareTeamPage = () => {
     setMessageModal((prev) => ({ ...prev, [field]: value }));
   };
 
+  const handleThreadReplyDraftChange = (queryId, value) => {
+    setThreadReplyDrafts((prev) => ({ ...prev, [queryId]: value }));
+  };
+
+  const handleSendThreadReply = async (queryId) => {
+    const draft = threadReplyDrafts[queryId] || '';
+    if (!queryId || !draft.trim()) return;
+
+    try {
+      setIsSaving(true);
+      const response = await fetch(
+        `http://localhost:5000/api/parent/care-team/messages/${queryId}/reply`,
+        {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({
+            message: draft.trim(),
+          }),
+        }
+      );
+
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.message || 'Failed to send reply');
+      }
+
+      setMessageHistory((prev) =>
+        prev.map((entry) =>
+          entry._id === queryId
+            ? {
+                ...entry,
+                status: payload?.query?.status || entry.status,
+                readAt: payload?.query?.readAt ?? entry.readAt,
+                replies: Array.isArray(payload?.query?.replies) ? payload.query.replies : entry.replies,
+              }
+            : entry
+        )
+      );
+      setThreadReplyDrafts((prev) => ({ ...prev, [queryId]: '' }));
+      setFeedback({ type: 'success', text: 'Reply sent to doctor.' });
+    } catch (error) {
+      console.error('Error sending thread reply:', error);
+      setFeedback({ type: 'error', text: error.message || 'Unable to send reply.' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleSendSecureMessage = async (event) => {
     event.preventDefault();
     if (!messageModal.provider?._id || !selectedChild?._id) return;
@@ -370,6 +421,15 @@ const ParentCareTeamPage = () => {
     editModal.location.trim() &&
     editModal.phone.trim() &&
     editModal.email.trim();
+
+  useEffect(() => {
+    if ((sectionParam === 'messages' || queryIdParam) && messageHistory.length >= 0) {
+      const el = document.getElementById('message-history-section');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }, [sectionParam, queryIdParam, messageHistory.length]);
 
   return (
     <div className="flex h-screen bg-gray-100">
@@ -522,7 +582,7 @@ const ParentCareTeamPage = () => {
             )}
 
             {!isLoadingChildren && children.length > 0 && (
-              <div className="bg-white rounded-lg shadow-md p-6">
+              <div id="message-history-section" className="bg-white rounded-lg shadow-md p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-2">Message History</h3>
                 <p className="text-sm text-gray-600 mb-4">View your sent queries and doctor replies for this child.</p>
 
@@ -537,7 +597,14 @@ const ParentCareTeamPage = () => {
                 {!isLoadingMessageHistory && messageHistory.length > 0 && (
                   <div className="space-y-4">
                     {messageHistory.map((entry) => (
-                      <article key={entry._id} className="rounded-lg border border-gray-200 p-4">
+                      <article
+                        key={entry._id}
+                        className={`rounded-lg border p-4 ${
+                          queryIdParam && entry._id === queryIdParam
+                            ? 'border-blue-400 ring-2 ring-blue-100'
+                            : 'border-gray-200'
+                        }`}
+                      >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0 flex-1">
                             <h4 className="font-semibold text-gray-800">{entry.subject || 'No subject'}</h4>
@@ -583,6 +650,32 @@ const ParentCareTeamPage = () => {
                             ))}
                           </div>
                         )}
+
+                        <div className="mt-3 border-t border-gray-100 pt-3">
+                          <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                            Reply to this thread
+                          </label>
+                          <textarea
+                            value={threadReplyDrafts[entry._id] || ''}
+                            onChange={(e) => handleThreadReplyDraftChange(entry._id, e.target.value)}
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm h-24 resize-none focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                            placeholder="Write a follow-up message to your doctor"
+                          />
+                          <div className="mt-2 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleSendThreadReply(entry._id)}
+                              disabled={isSaving || !String(threadReplyDrafts[entry._id] || '').trim()}
+                              className={`rounded-lg px-4 py-2 text-xs font-semibold text-white transition ${
+                                isSaving || !String(threadReplyDrafts[entry._id] || '').trim()
+                                  ? 'bg-blue-300 cursor-not-allowed'
+                                  : 'bg-blue-600 hover:bg-blue-700'
+                              }`}
+                            >
+                              Send Reply
+                            </button>
+                          </div>
+                        </div>
                       </article>
                     ))}
                   </div>

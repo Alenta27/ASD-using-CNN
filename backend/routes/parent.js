@@ -617,6 +617,53 @@ router.get('/care-team/messages', verifyToken, async (req, res) => {
   }
 });
 
+// Reply to an existing parent-therapist message thread
+router.post('/care-team/messages/:queryId/reply', verifyToken, async (req, res) => {
+  try {
+    const { queryId } = req.params;
+    const { message } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(queryId)) {
+      return res.status(400).json({ message: 'Invalid query id.' });
+    }
+
+    if (!message || !String(message).trim()) {
+      return res.status(400).json({ message: 'Reply message is required.' });
+    }
+
+    const query = await ParentTherapistQuery.findOne({
+      _id: queryId,
+      parentId: req.user.id
+    });
+
+    if (!query) {
+      return res.status(404).json({ message: 'Message thread not found.' });
+    }
+
+    query.replies = Array.isArray(query.replies) ? query.replies : [];
+    query.replies.push({
+      senderRole: 'parent',
+      senderId: req.user.id,
+      message: String(message).trim(),
+      createdAt: new Date()
+    });
+
+    // Mark as unread for therapist to surface the latest parent follow-up.
+    query.status = 'unread';
+    query.readAt = null;
+
+    await query.save();
+
+    res.status(201).json({
+      message: 'Reply sent successfully.',
+      query
+    });
+  } catch (error) {
+    console.error('POST /care-team/messages/:queryId/reply - Error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // Book appointment
 router.post('/appointments', verifyToken, async (req, res) => {
   try {

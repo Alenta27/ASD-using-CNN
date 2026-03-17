@@ -547,6 +547,24 @@ router.post('/session/send-for-review', verifyGuestOrUser, async (req, res) => {
         }
         session.status = 'pending_review';
         session.endTime = endTime || new Date();
+        
+        // CRITICAL: If patientId is provided, ensure session is linked correctly
+        if (req.body.patientId) {
+            session.patientId = req.body.patientId;
+            session.isGuest = false;
+            session.sessionType = 'authenticated';
+            
+            // Try to find therapistId for this patient
+            try {
+                const patient = await Patient.findById(req.body.patientId);
+                if (patient && patient.therapist_user_id) {
+                    session.therapistId = patient.therapist_user_id;
+                }
+            } catch (pErr) {
+                console.warn('⚠️ Could not fetch patient details for therapist linkage:', pErr.message);
+            }
+        }
+
         if (sessionType) session.sessionType = sessionType;
         if (assignedRole) session.assignedRole = assignedRole;
         if (source) session.source = source;

@@ -1,9 +1,128 @@
 const express = require('express');
 const router = express.Router();
 const Patient = require('../models/patient');
+const User = require('../models/user');
+const GazeSession = require('../models/GazeSession');
 const Screening = require('../models/screening');
 const { calculateMultimodalScore, getScreeningCompleteness } = require('../utils/multimodalFusion');
 const { verifyToken } = require('../middlewares/auth');
+
+function sendError(res, status, message, extra = {}) {
+    return res.status(status).json({
+        success: false,
+        message,
+        error: message,
+        ...extra
+    });
+}
+
+function normalizeEmail(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function parsePositiveInteger(value) {
+    const parsedValue = Number.parseInt(value, 10);
+    return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : null;
+}
+
+/**
+ * @route POST /api/patients
+ * @desc Create a new patient for therapist/admin workflows
+ * @access Therapist/Admin
+ */
+router.post('/', verifyToken, async (req, res) => {
+    try {
+        if (!['therapist', 'admin'].includes(req.user.role)) {
+            return sendError(res, 403, 'Only therapists or admins can create patients from this endpoint');
+        }
+
+        const patientName = String(req.body.patientName || req.body.name || '').trim();
+        const patientGender = String(req.body.patientGender || req.body.gender || '').trim();
+        const patientAge = parsePositiveInteger(req.body.patientAge ?? req.body.age);
+        const parentName = String(req.body.parentName || '').trim();
+        const parentEmail = normalizeEmail(req.body.parentEmail);
+        const medicalHistory = String(req.body.medicalHistory || req.body.medical_history || '').trim();
+        const linkToGuestEmail = normalizeEmail(req.body.linkToGuestEmail);
+
+        if (!patientName || !patientAge || !patientGender || !parentEmail) {
+            return sendError(res, 400, 'Patient name, age, gender, and parent email are required');
+        }
+
+        if (!isValidEmail(parentEmail)) {
+            return sendError(res, 400, 'Please provide a valid parent email address');
+        }
+
+        let parent = await User.findOne({ email: parentEmail });
+
+        if (parent && parent.role !== 'parent') {
+            return sendError(res, 409, 'This email is already registered to a non-parent account. Use a different parent email.');
+        }
+
+        if (!parent) {
+            parent = new User({
+                username: parentName || 'Parent',
+                email: parentEmail,
+                role: 'parent',
+                status: 'approved',
+                isActive: true
+            });
+            await parent.save();
+        }
+
+        const patient = new Patient({
+            name: patientName,
+            age: patientAge,
+            gender: patientGender,
+            medical_history: medicalHistory,
+            parent_id: parent._id,
+            therapist_user_id: req.user.role === 'therapist' ? req.user.id : undefined,
+            screeningStatus: 'pending',
+            reportStatus: 'pending',
+            registrationDate: new Date()
+        });
+
+        await patient.save();
+
+        let linkedSessions = 0;
+        if (linkToGuestEmail) {
+            const guestSessions = await GazeSession.find({
+                'guestInfo.email': linkToGuestEmail,
+                isGuest: true
+            });
+
+            for (const session of guestSessions) {
+                session.patientId = patient._id;
+                session.therapistId = req.user.id;
+                session.isGuest = false;
+                session.sessionType = 'authenticated';
+                await session.save();
+            }
+
+            linkedSessions = guestSessions.length;
+        }
+
+        return res.status(201).json({
+            success: true,
+            message: linkedSessions > 0
+                ? 'Patient added successfully and guest sessions linked'
+                : 'Patient added successfully',
+            patient,
+            linkedSessions
+        });
+    } catch (error) {
+        console.error('❌ Patient creation error:', error);
+
+        if (error.code === 11000 && error.keyPattern?.email) {
+            return sendError(res, 409, 'This email is already in use. Please use a different parent email.');
+        }
+
+        return sendError(res, 500, error.message || 'Failed to create patient');
+    }
+});
 
 /**
  * @route POST /api/patients/register
@@ -16,10 +135,7 @@ router.post('/register', verifyToken, async (req, res) => {
 
         // Validate required fields
         if (!name || !age || !gender) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'Name, age, and gender are required' 
-            });
+            return sendError(res, 400, 'Name, age, and gender are required');
         }
 
         // Get parent ID from token
@@ -57,10 +173,8 @@ router.post('/register', verifyToken, async (req, res) => {
 
     } catch (error) {
         console.error('❌ Patient registration error:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Failed to register patient',
-            details: error.message 
+        return sendError(res, 500, error.message || 'Failed to register patient', {
+            details: error.message
         });
     }
 });
@@ -85,10 +199,7 @@ router.get('/', verifyToken, async (req, res) => {
         } else if (userRole === 'therapist') {
             query.therapist_user_id = userId;
         } else if (userRole !== 'admin') {
-            return res.status(403).json({ 
-                success: false,
-                error: 'Unauthorized access' 
-            });
+            return sendError(res, 403, 'Unauthorized access');
         }
 
         const patients = await Patient.find(query)
@@ -114,10 +225,7 @@ router.get('/', verifyToken, async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error fetching patients:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Failed to fetch patients' 
-        });
+        return sendError(res, 500, error.message || 'Failed to fetch patients');
     }
 });
 
@@ -136,10 +244,7 @@ router.get('/:id', verifyToken, async (req, res) => {
             .populate('therapist_user_id', 'name email');
 
         if (!patient) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Patient not found' 
-            });
+            return sendError(res, 404, 'Patient not found');
         }
 
         // Authorization check
@@ -153,10 +258,7 @@ router.get('/:id', verifyToken, async (req, res) => {
             (userRole === 'therapist' && patient.therapist_user_id?.toString() === userId);
 
         if (!isAuthorized) {
-            return res.status(403).json({ 
-                success: false,
-                error: 'Access denied' 
-            });
+            return sendError(res, 403, 'Access denied');
         }
 
         // Get screening history
@@ -177,10 +279,7 @@ router.get('/:id', verifyToken, async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error fetching patient:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Failed to fetch patient details' 
-        });
+        return sendError(res, 500, error.message || 'Failed to fetch patient details');
     }
 });
 
@@ -203,10 +302,7 @@ router.put('/:id', verifyToken, async (req, res) => {
 
         const patient = await Patient.findById(patientId);
         if (!patient) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Patient not found' 
-            });
+            return sendError(res, 404, 'Patient not found');
         }
 
         // Authorization check
@@ -218,10 +314,7 @@ router.put('/:id', verifyToken, async (req, res) => {
             (userRole === 'parent' && patient.parent_id.toString() === userId);
 
         if (!isAuthorized) {
-            return res.status(403).json({ 
-                success: false,
-                error: 'Access denied' 
-            });
+            return sendError(res, 403, 'Access denied');
         }
 
         // Update patient
@@ -236,10 +329,7 @@ router.put('/:id', verifyToken, async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error updating patient:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Failed to update patient' 
-        });
+        return sendError(res, 500, error.message || 'Failed to update patient');
     }
 });
 
@@ -401,10 +491,7 @@ router.get('/search/by-cortexa-id/:cortexaId', verifyToken, async (req, res) => 
         const userRole = req.user.role;
         
         if (userRole !== 'admin' && patient.parent_id._id.toString() !== userId) {
-            return res.status(403).json({ 
-                success: false,
-                error: 'Access denied' 
-            });
+            return sendError(res, 403, 'Access denied');
         }
 
         res.json({

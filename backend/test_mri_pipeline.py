@@ -13,10 +13,8 @@ def test_imports():
     print("\n📦 Testing Python imports...")
     packages = {
         'numpy': 'numpy',
-        'joblib': 'joblib',
-        'sklearn': 'scikit-learn',
-        'nilearn': 'nilearn',
-        'nibabel': 'nibabel'
+        'tensorflow': 'tensorflow',
+        'cv2': 'opencv-python',
     }
     
     all_ok = True
@@ -36,8 +34,7 @@ def test_model_files():
     asd_fmri_dir = os.path.join(os.path.dirname(__file__), 'asd_fmri')
     
     required_files = {
-        'asd_svm_model.pkl': os.path.join(asd_fmri_dir, 'asd_svm_model.pkl'),
-        'scaler.pkl': os.path.join(asd_fmri_dir, 'scaler.pkl'),
+        'asd_mri_model_best_56.h5': os.path.join(asd_fmri_dir, 'asd_mri_model_best_56.h5'),
     }
     
     all_exist = True

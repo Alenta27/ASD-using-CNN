@@ -1,55 +1,71 @@
 """
-Command-line MRI-based ASD Prediction Script
-This script processes a single MRI scan and outputs prediction results as JSON.
-Used by the Node.js backend via python_worker.py
+MRI ASD Prediction Script (CNN Model)
+Used by Node.js backend to classify MRI scans
 """
 
 import os
 import sys
+
+# Suppress TensorFlow logging before importing it
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+
 import json
 import numpy as np
-import joblib
-import logging
-import warnings
-
-# Suppress verbose logging and warnings from nilearn and sklearn
-logging.getLogger('nilearn').setLevel(logging.ERROR)
-logging.getLogger('sklearn').setLevel(logging.ERROR)
-logging.getLogger().setLevel(logging.ERROR)
-warnings.filterwarnings('ignore')
-
-from nilearn import datasets, connectome
-from nilearn.maskers import NiftiLabelsMasker
+import tensorflow as tf
+import cv2
+import nibabel as nib
 import traceback
+import random
 
-# Global variables for model and preprocessing tools
 model = None
-scaler = None
-masker = None
-correlation_measure = None
+
+def make_patched_layer(base_class):
+    class PatchedLayer(base_class):
+        @classmethod
+        def from_config(cls, config):
+            # Strip quantization_config which causes issues in some Keras versions
+            config.pop('quantization_config', None)
+            return super().from_config(config)
+    return PatchedLayer
+
+PatchedDense = make_patched_layer(tf.keras.layers.Dense)
+PatchedConv2D = make_patched_layer(tf.keras.layers.Conv2D)
+PatchedMaxPooling2D = make_patched_layer(tf.keras.layers.MaxPooling2D)
+PatchedFlatten = make_patched_layer(tf.keras.layers.Flatten)
+PatchedDropout = make_patched_layer(tf.keras.layers.Dropout)
 
 def initialize_model():
-    """Load the trained model, scaler, and preprocessing tools."""
-    global model, scaler, masker, correlation_measure
+    global model
 
     try:
-        # Load model and scaler
-        model_path = 'asd_svm_model.pkl'
-        scaler_path = 'scaler.pkl'
+        model_path = "asd_mri_model_best_56.h5"
 
         if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not found: {model_path}")
-        model = joblib.load(model_path)
+            raise FileNotFoundError(f"Model not found: {model_path}")
 
-        if not os.path.exists(scaler_path):
-            raise FileNotFoundError(f"Scaler file not found: {scaler_path}")
-        scaler = joblib.load(scaler_path)
+        custom_objects = {
+            'Dense': PatchedDense,
+            'Conv2D': PatchedConv2D,
+            'MaxPooling2D': PatchedMaxPooling2D,
+            'Flatten': PatchedFlatten,
+            'Dropout': PatchedDropout
+        }
 
-        # Load atlas and initialize preprocessing tools
-        atlas = datasets.fetch_atlas_harvard_oxford('cort-maxprob-thr25-2mm')
-        atlas_filename = atlas.maps
-        masker = NiftiLabelsMasker(labels_img=atlas_filename, standardize=True)
-        correlation_measure = connectome.ConnectivityMeasure(kind='correlation')
+        try:
+            # Standard load with custom objects
+            model = tf.keras.models.load_model(model_path, custom_objects=custom_objects)
+        except Exception as e:
+            # Fallback for version/deserialization mismatches (like quantization_config)
+            print(f"DEBUG: Standard load failed, trying compile=False. Error: {str(e)}", file=sys.stderr)
+            # Some versions of Keras need this reset to clear bad state
+            try:
+                tf.keras.backend.clear_session()
+            except:
+                pass
+            model = tf.keras.models.load_model(model_path, custom_objects=custom_objects, compile=False)
+            
+        print("Loaded NEW MRI CNN model", file=sys.stderr)
+        print(f"DEBUG: Using CNN MRI model: {model_path}", file=sys.stderr)
 
         return True
 
@@ -57,169 +73,145 @@ def initialize_model():
         print(json.dumps({"error": f"Model initialization failed: {str(e)}"}))
         return False
 
-def process_mri_scan(scan_path):
-    """
-    Process a single MRI scan and extract connectivity features.
 
-    Args:
-        scan_path: Path to the NIfTI file (.nii.gz) or time series file (.1D/.txt)
-
-    Returns:
-        numpy array: Feature vector (upper triangle of connectivity matrix)
-    """
+def process_mri_scan(image_path, original_filename=None):
     try:
-        # Check file extension
-        if scan_path.lower().endswith(('.1d', '.txt')):
-            # Load time series from text file
-            print(f"DEBUG: Loading time series from text file: {scan_path}", file=sys.stderr)
-            time_series = np.loadtxt(scan_path)
-            print(f"DEBUG: Time series shape: {time_series.shape}", file=sys.stderr)
-        else:
-            # Extract time series from the MRI scan
-            print(f"DEBUG: Extracting time series from MRI scan: {scan_path}", file=sys.stderr)
-            time_series = masker.fit_transform(scan_path)
-            print(f"DEBUG: Time series shape after masker: {time_series.shape}", file=sys.stderr)
+        # Log filename and processing start
+        fname = original_filename if original_filename else os.path.basename(image_path)
+        print(f"DEBUG: Freshly processing MRI scan: {fname}", file=sys.stderr)
+
+        # Check if it's a NIfTI file
+        if image_path.lower().endswith(('.nii', '.nii.gz')):
+            print(f"DEBUG: Loading NIfTI file: {image_path}", file=sys.stderr)
+            img_data = nib.load(image_path).get_fdata()
             
-            # Handle 1D output from masker (which means single region or misalignment)
-            if len(time_series.shape) == 1:
-                print(f"DEBUG: Masker returned 1D array, reshaping to 2D with 1 region", file=sys.stderr)
-                time_series = time_series.reshape(-1, 1)
-                print(f"DEBUG: Reshaped to: {time_series.shape}", file=sys.stderr)
+            # Extract middle slice from the 3D/4D volume
+            if len(img_data.shape) == 4:
+                # If 4D, take middle volume and middle slice
+                mid_vol = img_data.shape[3] // 2
+                mid_slice = img_data.shape[2] // 2
+                slice_data = img_data[:, :, mid_slice, mid_vol]
+            elif len(img_data.shape) == 3:
+                mid_slice = img_data.shape[2] // 2
+                slice_data = img_data[:, :, mid_slice]
+            else:
+                slice_data = img_data
 
-        # Validate time series
-        if len(time_series.shape) != 2:
-            raise Exception(f"Invalid time series shape: {time_series.shape}. Expected 2D array (timepoints, regions)")
+            # Convert to uint8 for cv2 processing
+            # Normalize to 0-255 range first
+            slice_data = (slice_data - np.min(slice_data)) / (np.max(slice_data) - np.min(slice_data) + 1e-8) * 255
+            img = slice_data.astype(np.uint8)
+        else:
+            # Standard image loading
+            img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
-        # Compute connectivity matrix (correlation)
-        print(f"DEBUG: Computing connectivity matrix from time series shape: {time_series.shape}", file=sys.stderr)
-        correlation_matrix = correlation_measure.fit_transform([time_series])[0]
-        print(f"DEBUG: Correlation matrix shape: {correlation_matrix.shape}", file=sys.stderr)
+        if img is None:
+            raise Exception("Failed to load MRI image")
 
-        # Extract upper triangle as feature vector
-        upper_triangle = correlation_matrix[np.triu_indices_from(correlation_matrix, k=1)]
-        print(f"DEBUG: Upper triangle features extracted, shape: {upper_triangle.shape}, length: {len(upper_triangle)}", file=sys.stderr)
+        # Resize to training size
+        img = cv2.resize(img, (128, 128))
 
-        # IMPORTANT: Handle variable feature sizes due to atlas resampling
-        # The model expects 1128 features. If the extracted features are fewer
-        # (due to some brain regions being removed during atlas resampling),
-        # pad with zeros to match the expected size.
-        EXPECTED_FEATURES = 1128
-        if len(upper_triangle) < EXPECTED_FEATURES:
-            padding_size = EXPECTED_FEATURES - len(upper_triangle)
-            print(f"DEBUG: Padding {padding_size} features (have {len(upper_triangle)}, need {EXPECTED_FEATURES})", file=sys.stderr)
-            upper_triangle = np.pad(upper_triangle, (0, padding_size), mode='constant', constant_values=0)
-        elif len(upper_triangle) > EXPECTED_FEATURES:
-            # If somehow we have more features, truncate to expected size
-            print(f"DEBUG: Truncating features from {len(upper_triangle)} to {EXPECTED_FEATURES}", file=sys.stderr)
-            upper_triangle = upper_triangle[:EXPECTED_FEATURES]
+        # Normalize (0 to 1 range as requested)
+        img = img / 255.0
 
-        print(f"DEBUG: Final feature vector shape: {upper_triangle.shape}", file=sys.stderr)
-        return upper_triangle
+        # Add channel dimension (H, W, 1)
+        img = np.expand_dims(img, axis=-1)
 
+        # Add batch dimension (1, H, W, 1)
+        img = np.expand_dims(img, axis=0)
+
+        # Log input shape
+        print(f"DEBUG: Input shape for model: {img.shape}", file=sys.stderr)
+
+        return img
     except Exception as e:
-        import traceback
-        print(f"DEBUG: Error in process_mri_scan: {str(e)}", file=sys.stderr)
-        print(f"DEBUG: Traceback: {traceback.format_exc()}", file=sys.stderr)
-        raise Exception(f"Error processing MRI scan: {str(e)}")
+        raise Exception(f"Error processing MRI image: {str(e)}")
 
-def predict_asd(features):
-    """
-    Make ASD prediction using the trained model.
 
-    Args:
-        features: Feature vector from MRI scan
+def predict_asd(image, threshold=0.35):
 
-    Returns:
-        dict: Prediction result with diagnosis and confidence
-    """
     try:
-        # Log feature dimensions for debugging
-        print(f"DEBUG: Feature vector type: {type(features)}, shape: {features.shape}", file=sys.stderr)
-        print(f"DEBUG: Feature vector length: {len(features)}, Expected: 1128", file=sys.stderr)
+        prediction = float(model.predict(image, verbose=0)[0][0])
         
-        # Ensure features is 1D array
-        if len(features.shape) != 1:
-            print(f"DEBUG: Flattening features from shape {features.shape} to 1D", file=sys.stderr)
-            features = features.flatten()
-        
-        # Reshape features for prediction (scaler expects 2D: (n_samples, n_features))
-        features_reshaped = features.reshape(1, -1)
-        print(f"DEBUG: Reshaped features for scaler: {features_reshaped.shape}", file=sys.stderr)
+        # Log raw probability
+        print(f"DEBUG: Raw ASD probability: {prediction:.4f}", file=sys.stderr)
 
-        # Scale features
-        print(f"DEBUG: Scaling features with scaler...", file=sys.stderr)
-        features_scaled = scaler.transform(features_reshaped)
-        print(f"DEBUG: Scaled features shape: {features_scaled.shape}", file=sys.stderr)
+        if prediction >= threshold:
+            diagnosis = "ASD"
+            # Confidence relative to threshold
+            confidence = prediction
+        else:
+            diagnosis = "No ASD"
+            confidence = 1 - prediction
 
-        # Make prediction
-        print(f"DEBUG: Making prediction with model...", file=sys.stderr)
-        prediction = model.predict(features_scaled)[0]
-        print(f"DEBUG: Raw prediction: {prediction}", file=sys.stderr)
-
-        # Get probability estimates
-        probabilities = model.predict_proba(features_scaled)[0]
-        print(f"DEBUG: Probabilities: {probabilities}", file=sys.stderr)
-
-        # Interpret results
-        diagnosis = "ASD" if prediction == 1 else "Control"
-        confidence = probabilities[1] if prediction == 1 else probabilities[0]
+        # Log final decision
+        print(f"DEBUG: Final decision: {diagnosis} (Threshold: {threshold})", file=sys.stderr)
 
         return {
             "diagnosis": diagnosis,
-            "confidence": float(confidence),
-            "asd_probability": float(probabilities[1]),
-            "control_probability": float(probabilities[0])
+            "confidence": round(float(confidence), 4),
+            "asd_probability": round(float(prediction), 4),
+            "control_probability": round(float(1 - prediction), 4),
+            "threshold_used": threshold,
+            "raw_prediction": round(float(prediction), 4)
         }
 
     except Exception as e:
-        import traceback
-        print(f"DEBUG: Error in predict_asd: {str(e)}", file=sys.stderr)
-        print(f"DEBUG: Traceback: {traceback.format_exc()}", file=sys.stderr)
-        raise Exception(f"Error making prediction: {str(e)}")
+        raise Exception(f"Prediction error: {str(e)}")
+
 
 def main():
-    """Main function for command-line usage."""
+
     try:
+
         if len(sys.argv) < 2:
-            print(json.dumps({"error": "Missing file path argument"}))
+            print(json.dumps({"error": "Missing MRI file path"}))
             sys.exit(1)
 
         file_path = sys.argv[1]
+        original_filename = sys.argv[2] if len(sys.argv) > 2 else os.path.basename(file_path)
+        
+        # Check for threshold override in arguments
+        threshold = 0.35
+        for arg in sys.argv:
+            if arg.startswith('--threshold='):
+                try:
+                    threshold = float(arg.split('=')[1])
+                except:
+                    pass
+
         if not os.path.exists(file_path):
             print(json.dumps({"error": f"File not found: {file_path}"}))
             sys.exit(1)
 
-        print(f"DEBUG: Starting MRI prediction for: {file_path}", file=sys.stderr)
+        # Log for debugging
+        print(f"DEBUG: Processing file: {original_filename} (Path: {file_path})", file=sys.stderr)
 
-        # Change to the script's directory to find model files
         script_dir = os.path.dirname(os.path.abspath(__file__))
         os.chdir(script_dir)
-        print(f"DEBUG: Working directory changed to: {script_dir}", file=sys.stderr)
 
-        # Initialize model
-        print("DEBUG: Initializing model...", file=sys.stderr)
         if not initialize_model():
             sys.exit(1)
-        print("DEBUG: Model initialized successfully", file=sys.stderr)
 
-        # Process MRI scan and extract features
-        print("DEBUG: Processing MRI scan...", file=sys.stderr)
-        features = process_mri_scan(file_path)
-        print(f"DEBUG: MRI scan processed, features shape: {features.shape}", file=sys.stderr)
+        image = process_mri_scan(file_path, original_filename)
+        
+        # Removed mock logic for "um_1" to ensure real predictions
+        result = predict_asd(image, threshold=threshold)
+        
+        # Add file info to result
+        result["filename"] = original_filename
 
-        # Make prediction
-        print("DEBUG: Making prediction...", file=sys.stderr)
-        result = predict_asd(features)
-        print(f"DEBUG: Prediction successful: {result}", file=sys.stderr)
+        # Log final prediction details
+        print(f"DEBUG: Final prediction for {original_filename}: {result['diagnosis']} (Prob: {result['asd_probability']})", file=sys.stderr)
 
-        # Output result as JSON
         print(json.dumps(result))
 
     except Exception as e:
-        # Catch-all for any unexpected errors
+
         error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-        print(json.dumps({"error": f"Prediction failed: {error_msg}"}), file=sys.stderr)
+        print(json.dumps({"error": error_msg}))
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

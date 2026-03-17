@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { FaArrowLeft, FaCheckCircle, FaExclamationTriangle, FaInfoCircle } from 'react-icons/fa';
+import { toast } from 'react-toastify';
 import ScreeningQuestionnaire from '../components/ScreeningQuestionnaire';
 
 const AutismScreeningPage = () => {
@@ -83,6 +84,18 @@ const AutismScreeningPage = () => {
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
+
+      await axios.post('http://localhost:5000/api/screening/save', {
+        childName: child?.name || 'Child',
+        screeningType: 'MCHAT',
+        scores: {
+          questionnaireScore: Number(data.score || 0),
+          attentionScore: 100,
+          mriPrediction: 'Unknown'
+        }
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       
       setResultData({
         ...response.data.result,
@@ -92,7 +105,11 @@ const AutismScreeningPage = () => {
       setShowResult(true);
     } catch (err) {
       console.error('Error submitting screening:', err);
-      alert('Failed to submit screening results.');
+      console.error('Error response:', err.response?.data);
+      console.error('Error message:', err.message);
+      const errorMsg = err.response?.data?.error || err.message || 'Failed to submit screening results. Please try again.';
+      console.error('Final error to display:', errorMsg);
+      toast.error(errorMsg);
     }
   };
 
