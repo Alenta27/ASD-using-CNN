@@ -7,6 +7,7 @@ const fs = require('fs');
 const { verifyToken, teacherCheck, requireResourceAccess } = require('../middlewares/auth');
 const User = require('../models/user');
 const Patient = require('../models/patient');
+const Screening = require('../models/screening');
 const Report = require('../models/report');
 const SocialResponseGame = require('../models/socialResponseGame');
 
@@ -49,20 +50,32 @@ const getTeacherStudentQuery = async (teacherUserId) => {
   return buildTeacherStudentQuery(teacherUserId, teacher?.teacherId);
 };
 
-const fallbackScreeningTemplates = [
-  { studentName: 'Manuel Saji', type: 'Parent Questionnaire', riskLevel: 'Low', assignedDate: '2025-09-10', dueDate: '2025-09-17', status: 'Completed', score: 94 },
-  { studentName: 'Rohan Sharma', type: 'Classroom Observation', riskLevel: 'Low', assignedDate: '2025-09-08', dueDate: '2025-09-15', status: 'Completed', score: 90 },
-  { studentName: 'Priya Patel', type: 'Teacher Checklist', riskLevel: 'Medium', assignedDate: '2025-09-18', dueDate: '2025-09-25', status: 'Completed', score: 82 },
-  { studentName: 'Aditya Singh', type: 'Parent Questionnaire', riskLevel: 'High', assignedDate: '2025-10-04', dueDate: '2025-10-11', status: 'In Progress', score: null },
-  { studentName: 'Ananya Reddy', type: 'Teacher Checklist', riskLevel: 'Low', assignedDate: '2025-09-20', dueDate: '2025-09-27', status: 'Completed', score: 96 },
-  { studentName: 'Vikram Kumar', type: 'Speech Assessment', riskLevel: 'Medium', assignedDate: '2025-09-27', dueDate: '2025-10-04', status: 'Completed', score: 78 },
-  { studentName: 'Diya Gupta', type: 'Parent Questionnaire', riskLevel: 'Low', assignedDate: '2025-09-14', dueDate: '2025-09-21', status: 'Completed', score: 91 },
-  { studentName: 'Arjun Menon', type: 'Behavior Checklist', riskLevel: 'Medium', assignedDate: '2025-10-07', dueDate: '2025-10-14', status: 'Pending', score: null },
-  { studentName: 'Aisha Khan', type: 'Parent Questionnaire', riskLevel: 'Low', assignedDate: '2025-09-23', dueDate: '2025-09-30', status: 'Completed', score: 88 },
-  { studentName: 'Karan Verma', type: 'Teacher Checklist', riskLevel: 'High', assignedDate: '2025-10-13', dueDate: '2025-10-20', status: 'In Progress', score: null },
-  { studentName: 'Sneha Desai', type: 'Speech Assessment', riskLevel: 'Medium', assignedDate: '2025-10-06', dueDate: '2025-10-13', status: 'Pending', score: null },
-  { studentName: 'Adwaith Verma', type: 'Parent Questionnaire', riskLevel: 'Low', assignedDate: '2025-08-06', dueDate: '2025-08-13', status: 'Completed', score: 89 }
-];
+const titleCase = (value) => {
+  const text = typeof value === 'string' ? value : '';
+  if (!text.trim()) return 'Unknown';
+  return text
+    .replace(/[_-]/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+};
+
+const deriveRiskFromLabel = (label, fallbackRisk) => {
+  const lower = (label || '').toLowerCase();
+  if (lower.includes('high')) return 'High';
+  if (lower.includes('medium') || lower.includes('moderate')) return 'Medium';
+  if (lower.includes('low') || lower.includes('no asd')) return 'Low';
+  return normalizeRiskLevel(fallbackRisk);
+};
+
+const screeningStatusText = (value) => {
+  const lower = (value || '').toLowerCase();
+  if (lower === 'completed') return 'Completed';
+  if (lower === 'in-progress') return 'In Progress';
+  if (lower === 'failed') return 'Needs Review';
+  return 'Pending';
+};
 
 // All routes require authentication and teacher role
 router.use(verifyToken);
@@ -112,6 +125,137 @@ router.get('/class-stats', async (req, res) => {
     res.json(stats);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get month-wise class progress for dashboard chart
+router.get('/class-progress', async (req, res) => {
+  try {
+    const teacherQuery = await getTeacherStudentQuery(req.user.id);
+    const students = await Patient.find(teacherQuery).select('_id').lean();
+
+    if (!students.length) {
+      return res.json([]);
+    }
+
+    const studentIds = students.map((student) => student._id);
+    const totalStudents = students.length;
+    const now = new Date();
+    const months = [];
+
+    for (let offset = 7; offset >= 0; offset -= 1) {
+      const monthStart = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() - offset + 1, 1);
+      months.push({
+        key: `${monthStart.getFullYear()}-${monthStart.getMonth() + 1}`,
+        label: monthStart.toLocaleString('en-US', { month: 'short' }),
+        start: monthStart,
+        end: monthEnd
+      });
+    }
+
+    const monthRanges = months.map(({ start, end, label }) => ({
+      month: label,
+      progress: 0,
+      start,
+      end
+    }));
+
+    const [screeningAgg, reportAgg] = await Promise.all([
+      Screening.aggregate([
+        {
+          $match: {
+            patientId: { $in: studentIds },
+            createdAt: {
+              $gte: monthRanges[0].start,
+              $lt: monthRanges[monthRanges.length - 1].end
+            },
+            status: 'completed'
+          }
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' }
+            },
+            uniqueStudents: { $addToSet: '$patientId' }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            key: {
+              $concat: [
+                { $toString: '$_id.year' },
+                '-',
+                { $toString: '$_id.month' }
+              ]
+            },
+            count: { $size: '$uniqueStudents' }
+          }
+        }
+      ]),
+      Report.aggregate([
+        {
+          $match: {
+            teacherId: new mongoose.Types.ObjectId(req.user.id),
+            patientId: { $in: studentIds },
+            createdAt: {
+              $gte: monthRanges[0].start,
+              $lt: monthRanges[monthRanges.length - 1].end
+            }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' }
+            },
+            uniqueStudents: { $addToSet: '$patientId' }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            key: {
+              $concat: [
+                { $toString: '$_id.year' },
+                '-',
+                { $toString: '$_id.month' }
+              ]
+            },
+            count: { $size: '$uniqueStudents' }
+          }
+        }
+      ])
+    ]);
+
+    const screeningMap = new Map(screeningAgg.map((item) => [item.key, item.count]));
+    const reportMap = new Map(reportAgg.map((item) => [item.key, item.count]));
+
+    const chart = months.map((month) => {
+      const screenedStudents = screeningMap.get(month.key) || 0;
+      const reportedStudents = reportMap.get(month.key) || 0;
+
+      // Weighted progress: screening completion (70%) + report completion (30%)
+      const screeningRatio = totalStudents ? screenedStudents / totalStudents : 0;
+      const reportRatio = totalStudents ? reportedStudents / totalStudents : 0;
+      const progress = Math.round(Math.min(1, (screeningRatio * 0.7) + (reportRatio * 0.3)) * 100);
+
+      return {
+        month: month.label,
+        progress,
+        completedScreenings: screenedStudents,
+        completedReports: reportedStudents,
+        totalStudents
+      };
+    });
+
+    return res.json(chart);
+  } catch (error) {
+    return res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -184,54 +328,167 @@ router.delete('/students/:studentId', async (req, res) => {
 router.get('/screenings', async (req, res) => {
   try {
     const teacherQuery = await getTeacherStudentQuery(req.user.id);
-    const students = await Patient.find(teacherQuery);
+    const students = await Patient.find(teacherQuery).lean();
+
+    if (!students.length) {
+      return res.json([]);
+    }
+
+    const studentIds = students.map((student) => student._id);
+    const screeningDocs = await Screening.find({
+      patientId: { $in: studentIds }
+    }).sort({ createdAt: -1 }).lean();
+
+    const latestScreeningByStudent = new Map();
+    screeningDocs.forEach((screening) => {
+      const key = screening.patientId ? String(screening.patientId) : '';
+      if (key && !latestScreeningByStudent.has(key)) {
+        latestScreeningByStudent.set(key, screening);
+      }
+    });
+
+    const formatDate = (value) => {
+      if (!value) return null;
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return null;
+      return date.toISOString().split('T')[0];
+    };
+
+    const toDisplayStatus = (value) => {
+      const lower = (value || '').toLowerCase();
+      if (lower === 'completed') return 'Completed';
+      if (lower === 'in-progress') return 'In Progress';
+      if (lower === 'failed') return 'Failed';
+      return 'Pending';
+    };
+
+    const resolveRiskLevel = (studentRisk, resultLabel) => {
+      const label = (resultLabel || '').toLowerCase();
+      if (label.includes('high')) return 'High';
+      if (label.includes('medium') || label.includes('moderate')) return 'Medium';
+      if (label.includes('low') || label.includes('no asd')) return 'Low';
+      return normalizeRiskLevel(studentRisk);
+    };
+
     const screeningsFromDb = students.map((student) => {
-      const assignedDate = clampDateToRange(student.createdAt || student.submittedDate || Date.now());
-      const dueCandidate = new Date(assignedDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-      const dueDate = clampDateToRange(dueCandidate);
-      const statusMap = {
-        completed: 'Completed',
-        'in-progress': 'In Progress',
-        pending: 'Pending'
-      };
-      const status = statusMap[(student.screeningStatus || '').toLowerCase()] || 'Pending';
-      const riskLevel = normalizeRiskLevel(student.riskLevel);
-      const scoreMap = {
-        Low: 92,
-        Medium: 76,
-        High: 58
-      };
-      const score = status === 'Completed' ? scoreMap[riskLevel] || 70 : null;
+      const latest = latestScreeningByStudent.get(String(student._id));
+      const assignedDateSource = latest?.createdAt || student.submittedDate || student.createdAt;
+      const assignedDate = formatDate(assignedDateSource);
+      const dueDate = assignedDateSource
+        ? formatDate(new Date(new Date(assignedDateSource).getTime() + 7 * 24 * 60 * 60 * 1000))
+        : null;
+      const statusSource = latest?.status || student.screeningStatus;
+      const status = toDisplayStatus(statusSource);
+      const riskLevel = resolveRiskLevel(student.riskLevel, latest?.resultLabel);
+      const score = typeof latest?.resultScore === 'number'
+        ? Math.round(latest.resultScore * 100)
+        : null;
+
       return {
         id: student._id,
         studentName: student.name,
-        type: student.screeningType || 'Questionnaire',
-        assignedDate: formatDateInRange(assignedDate),
-        dueDate: formatDateInRange(dueDate),
+        type: latest?.screeningType || student.screeningType || 'Unknown',
+        assignedDate,
+        dueDate,
         status,
         score,
         riskLevel
       };
     });
-    const seenNames = new Set(screeningsFromDb.map((item) => item.studentName.toLowerCase()));
-    const fallbackEntries = fallbackScreeningTemplates.map((template, index) => ({
-      id: `fallback-${index + 1}`,
-      studentName: template.studentName,
-      type: template.type || 'Questionnaire',
-      riskLevel: normalizeRiskLevel(template.riskLevel),
-      assignedDate: formatDateInRange(template.assignedDate),
-      dueDate: formatDateInRange(template.dueDate),
-      status: template.status || 'Pending',
-      score: typeof template.score === 'number' ? template.score : null
-    })).filter((item) => !seenNames.has(item.studentName.toLowerCase()));
-    res.json([...screeningsFromDb, ...fallbackEntries]);
+    res.json(screeningsFromDb);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }
 });
 
+router.get('/screenings/:studentId/report', async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(studentId)) {
+      return res.status(400).json({ message: 'Invalid student ID' });
+    }
+
+    const teacherQuery = await getTeacherStudentQuery(req.user.id);
+    const student = await Patient.findOne({
+      _id: studentId,
+      ...teacherQuery
+    }).lean();
+
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    const latestScreening = await Screening.findOne({
+      patientId: student._id
+    }).sort({ createdAt: -1 }).lean();
+
+    const screeningType = titleCase(latestScreening?.screeningType || student.screeningType || 'Questionnaire');
+    const riskLevel = deriveRiskFromLabel(latestScreening?.resultLabel, student.riskLevel);
+    const screeningStatus = screeningStatusText(latestScreening?.status || student.screeningStatus);
+    const scorePercent = typeof latestScreening?.resultScore === 'number'
+      ? Math.round(latestScreening.resultScore * 100)
+      : null;
+    const screeningDate = latestScreening?.createdAt || student.submittedDate || student.createdAt || new Date();
+
+    const strengthsLine =
+      riskLevel === 'Low'
+        ? 'Current indicators suggest stable developmental patterns and good responsiveness during screening tasks.'
+        : riskLevel === 'Medium'
+          ? 'The student demonstrates several positive responses and engagement moments during structured screening prompts.'
+          : 'The screening captured meaningful baseline responses that help guide targeted intervention planning.';
+
+    const recommendationsLine =
+      riskLevel === 'Low'
+        ? 'Continue routine classroom observation and periodic check-ins to track consistency over time.'
+        : riskLevel === 'Medium'
+          ? 'Schedule focused follow-up activities for communication and social interaction, and reassess within 4 to 6 weeks.'
+          : 'Prioritize specialist consultation and structured intervention planning, with close monitoring and short-cycle reassessment.';
+
+    const scoreText = scorePercent === null ? 'N/A' : `${scorePercent}%`;
+    const summary = [
+      `This report summarizes the latest ${screeningType} screening for ${student.name}.`,
+      `Screening status is ${screeningStatus} with a risk indication of ${riskLevel} and a score of ${scoreText}.`,
+      `These findings should be interpreted alongside classroom behavior, parent observations, and follow-up assessments for a comprehensive view.`
+    ].join(' ');
+
+    const reportPayload = {
+      teacherId: req.user.id,
+      patientId: student._id,
+      title: `${screeningType} Screening Report - ${student.name}`,
+      author: 'Teacher Dashboard',
+      date: screeningDate,
+      period: `${new Date(screeningDate).getFullYear()} Screening Cycle`,
+      summary,
+      strengths: strengthsLine,
+      recommendations: recommendationsLine,
+      status: 'final'
+    };
+
+    const report = await Report.findOneAndUpdate(
+      { teacherId: req.user.id, patientId: student._id, title: reportPayload.title },
+      { $set: reportPayload },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    ).lean();
+
+    return res.json({
+      report,
+      screening: {
+        studentId: student._id,
+        studentName: student.name,
+        type: screeningType,
+        riskLevel,
+        status: screeningStatus,
+        score: scorePercent,
+        screeningDate: new Date(screeningDate).toISOString()
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get reports for teacher's students
-router.get('/reports', requireResourceAccess('reports'), async (req, res) => {
+router.get('/reports', async (req, res) => {
   try {
     const reports = await Report.find({ teacherId: req.user.id }).populate('patientId', 'name');
     res.json(reports);
@@ -241,7 +498,7 @@ router.get('/reports', requireResourceAccess('reports'), async (req, res) => {
 });
 
 // Get reports for a specific student
-router.get('/reports/student/:studentId', requireResourceAccess('reports'), async (req, res) => {
+router.get('/reports/student/:studentId', async (req, res) => {
   try {
     const reports = await Report.find({ 
       teacherId: req.user.id,
@@ -256,10 +513,16 @@ router.get('/reports/student/:studentId', requireResourceAccess('reports'), asyn
 // Create a report for a student
 router.post('/reports', async (req, res) => {
   try {
+    const { studentId } = req.body;
+    if (!studentId) {
+      return res.status(400).json({ message: 'studentId is required' });
+    }
+
     // Verify the student belongs to this teacher
-    const student = await Patient.findOne({ 
-      _id: req.body.studentId, 
-      assignedTeacherId: req.user.id 
+    const teacherQuery = await getTeacherStudentQuery(req.user.id);
+    const student = await Patient.findOne({
+      _id: studentId,
+      ...teacherQuery
     });
     
     if (!student) {
@@ -269,7 +532,7 @@ router.post('/reports', async (req, res) => {
     const reportData = {
       ...req.body,
       teacherId: req.user.id,
-      patientId: req.body.studentId,
+      patientId: studentId,
     };
     
     const report = new Report(reportData);
@@ -277,6 +540,25 @@ router.post('/reports', async (req, res) => {
     res.status(201).json(report);
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete a report created by the teacher
+router.delete('/reports/:reportId', async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const deleted = await Report.findOneAndDelete({
+      _id: reportId,
+      teacherId: req.user.id
+    });
+
+    if (!deleted) {
+      return res.status(404).json({ message: 'Report not found' });
+    }
+
+    return res.json({ success: true, message: 'Report deleted successfully' });
+  } catch (error) {
+    return res.status(500).json({ message: 'Server error' });
   }
 });
 

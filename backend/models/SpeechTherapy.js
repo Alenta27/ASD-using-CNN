@@ -70,6 +70,14 @@ const speechTherapySchema = new mongoose.Schema({
     description: "AI-generated automated feedback"
   },
   
+  // Therapy Type (Extended Feature 1)
+  therapyType: {
+    type: String,
+    enum: ['Pronunciation', 'Articulation', 'Fluency', 'VoiceQuality', 'General'],
+    default: 'General',
+    description: "Specific type of speech therapy session"
+  },
+
   // Therapist Evaluation
   rating: { 
     type: String, 
@@ -90,6 +98,55 @@ const speechTherapySchema = new mongoose.Schema({
   evaluatedAt: {
     type: Date,
     required: false
+  },
+
+  // Detailed Evaluation Criteria (Extended Feature 2)
+  evaluationCriteria: {
+    pronunciation: {
+      clarity: { type: Number, min: 0, max: 10, required: false },
+      accuracy: { type: Number, min: 0, max: 10, required: false },
+      naturalness: { type: Number, min: 0, max: 10, required: false }
+    },
+    articulation: {
+      consonantAccuracy: { type: Number, min: 0, max: 10, required: false },
+      vowelAccuracy: { type: Number, min: 0, max: 10, required: false },
+      consistency: { type: Number, min: 0, max: 10, required: false }
+    },
+    fluency: {
+      speechRate: { type: Number, min: 0, max: 10, required: false },
+      pauseControl: { type: Number, min: 0, max: 10, required: false },
+      rhythm: { type: Number, min: 0, max: 10, required: false }
+    },
+    voiceQuality: {
+      pitch: { type: Number, min: 0, max: 10, required: false },
+      volume: { type: Number, min: 0, max: 10, required: false },
+      resonance: { type: Number, min: 0, max: 10, required: false }
+    }
+  },
+
+  // Overall Score (Extended Feature 3)
+  overallScore: {
+    type: Number,
+    min: 0,
+    max: 100,
+    required: false,
+    description: "Calculated overall score from evaluation criteria"
+  },
+
+  // Detailed Feedback (Extended Feature 5)
+  detailedFeedback: {
+    strengths: [String],
+    areasForImprovement: [String],
+    recommendations: [String],
+    template: { type: String, required: false }
+  },
+
+  // Audio Analysis (Extended Feature 6)
+  audioAnalysis: {
+    duration: { type: Number, required: false },
+    confidenceScore: { type: Number, min: 0, max: 100, required: false },
+    noiseLevel: { type: String, enum: ['Low', 'Medium', 'High'], required: false },
+    clarity: { type: Number, min: 0, max: 100, required: false }
   },
   
   // Status

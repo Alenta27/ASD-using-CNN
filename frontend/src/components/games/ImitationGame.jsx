@@ -16,11 +16,11 @@ const ACTIONS = [
   { id: 'prayer', name: 'Hands Together (Prayer)', emoji: '🤲', timeLimit: 8 }
 ];
 
-// Thresholds - Very forgiving for testing
-const SUSTAIN_FRAMES = 8; // Reduced to ~0.5 seconds for faster detection
-const CONFIDENCE_CORRECT = 0.35; // Very low threshold for correct detection
-const CONFIDENCE_PARTIAL = 0.15; // Very low threshold for partial
-const WINDOW_SIZE = 30; // ~1.5 - 2 seconds temporal window
+// Thresholds - stricter to reduce false positives on wrong gestures
+const SUSTAIN_FRAMES = 10; // Require a slightly longer stable match window
+const CONFIDENCE_CORRECT = 0.75;
+const CONFIDENCE_PARTIAL = 0.5;
+const WINDOW_SIZE = 24; // Smoother, shorter temporal averaging window
 
 const ImitationGame = ({ studentId, onComplete }) => {
   // State machine: idle → camera_ready → demo_action → imitate → validating → feedback → next_action → final_results
@@ -36,11 +36,13 @@ const ImitationGame = ({ studentId, onComplete }) => {
   const [detectionState, setDetectionState] = useState('none'); // 'none', 'partial', 'correct'
   const [confidencePct, setConfidencePct] = useState(0);
   const [actionResults, setActionResults] = useState([]);
+  const actionResultsRef = useRef([]);
   const currentIndexRef = useRef(0);
 
   // Session timing
   const [sessionStartTime, setSessionStartTime] = useState(null);
   const [actionStartTime, setActionStartTime] = useState(null);
+  const actionStartTimeRef = useRef(null);
 
   // MediaPipe refs
   const videoRef = useRef(null);
@@ -110,6 +112,10 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
   const startGame = async () => {
     setCameraError(null);
+    setActionResults([]);
+    actionResultsRef.current = [];
+    currentIndexRef.current = 0;
+    setCurrentIndex(0);
     phaseRef.current = 'camera_ready';
     setPhase('camera_ready');
     try {
@@ -208,7 +214,9 @@ const ImitationGame = ({ studentId, onComplete }) => {
     
     phaseRef.current = 'imitate';
     setPhase('imitate');
-    setActionStartTime(Date.now());
+    const now = Date.now();
+    actionStartTimeRef.current = now;
+    setActionStartTime(now);
     setTimeLeft(action.timeLimit);
     setFeedbackText('Detecting gesture…');
     setConfidencePct(0);
@@ -365,12 +373,13 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const result = {
       actionName: action.name,
       status: displayStatus, 
-      success: displayStatus === 'correct' || displayStatus === 'partial',
+      success: displayStatus === 'correct',
       confidenceScore: Number((actualConf || 0).toFixed(2)),
-      reactionTimeMs: actionStartTime ? Date.now() - actionStartTime : 0
+      reactionTimeMs: actionStartTimeRef.current ? Date.now() - actionStartTimeRef.current : 0
     };
     
-    const updatedResults = [...actionResults, result];
+    const updatedResults = [...actionResultsRef.current, result];
+    actionResultsRef.current = updatedResults;
     setActionResults(updatedResults);
 
     if (actionTimerRef.current) clearInterval(actionTimerRef.current);
@@ -436,10 +445,6 @@ const ImitationGame = ({ studentId, onComplete }) => {
     }
     
     if (hl.length < 2) {
-      // More forgiving: allow higher confidence with 1 hand visible
-      if (hl.length === 1) {
-        return { confidence: 0.4 }; // Higher confidence for 1 hand visible
-      }
       return { confidence: 0 };
     }
     
@@ -464,11 +469,10 @@ const ImitationGame = ({ studentId, onComplete }) => {
       });
     }
 
-    // Clapping is hands coming close together
+    // Clapping requires both hands coming very close.
     let conf = 0;
-    if (relativeDist < 2.0) conf = 0.95; // More forgiving distance
-    else if (relativeDist < 4.0) conf = 0.6; // Wider range
-    else conf = 0.3; // Higher baseline for 2 hands visible
+    if (relativeDist < 1.6) conf = 0.95;
+    else if (relativeDist < 2.3) conf = 0.6;
     
     return { confidence: conf };
   };
@@ -525,10 +529,9 @@ const ImitationGame = ({ studentId, onComplete }) => {
       });
     }
 
-    // A wave needs multiple direction changes
+    // A wave needs multiple direction changes.
     const changes = waveDirRef.current.changes;
-    // Much more forgiving - any hand movement counts
-    const conf = changes >= 2 ? 0.95 : changes >= 1 ? 0.7 : (hl.length > 0 ? 0.4 : 0.2);
+    const conf = changes >= 2 ? 0.95 : changes >= 1 ? 0.45 : 0;
     return { confidence: conf };
   };
 
@@ -554,14 +557,21 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
     const smileScore = (left.score + right.score) / 2;
 
+    // Build a neutral baseline for the current smile action to avoid false positives.
+    if (neutralSmileBaselineRef.current === null) {
+      neutralSmileBaselineRef.current = smileScore;
+      return { confidence: 0 };
+    }
+
+    const delta = Math.max(0, smileScore - neutralSmileBaselineRef.current);
+
     if (Math.random() < 0.1) {
-      console.log('[ImitationGame] Smile detection:', { smileScore: smileScore.toFixed(3) });
+      console.log('[ImitationGame] Smile detection:', { smileScore: smileScore.toFixed(3), delta: delta.toFixed(3) });
     }
 
     let conf = 0;
-    if (smileScore > 0.20) conf = 0.95; // Very forgiving
-    else if (smileScore > 0.10) conf = 0.7;
-    else if (smileScore > 0.03) conf = 0.4; // Show recognition for slight smile
+    if (delta > 0.12 || smileScore > 0.45) conf = 0.95;
+    else if (delta > 0.07 || smileScore > 0.3) conf = 0.6;
     
     return { confidence: conf };
   };
@@ -569,13 +579,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
   // 4) Raise Hands – wrists above shoulders or near ears
   const detectHandsUp = (pose) => {
     const lms = pose?.landmarks?.[0];
-    if (!lms) {
-      // Show baseline confidence if pose exists at all
-      if (pose && pose.landmarks && pose.landmarks.length > 0) {
-        return { confidence: 0.1 };
-      }
-      return { confidence: 0 };
-    }
+    if (!lms) return { confidence: 0 };
     const leftWrist = lms[15], rightWrist = lms[16], leftShoulder = lms[11], rightShoulder = lms[12];
     const leftEar = lms[7], rightEar = lms[8];
     
@@ -588,8 +592,8 @@ const ImitationGame = ({ studentId, onComplete }) => {
     }
 
     // Wrists should be higher than shoulders (lower Y value)
-    const leftRaised = (leftShoulder && (leftShoulder.y - leftWrist.y) > shoulderDist * 0.15) || (leftEar && (leftEar.y - leftWrist.y) > -0.05); // Lowered threshold
-    const rightRaised = (rightShoulder && (rightShoulder.y - rightWrist.y) > shoulderDist * 0.15) || (rightEar && (rightEar.y - rightWrist.y) > -0.05);
+    const leftRaised = (leftShoulder && (leftShoulder.y - leftWrist.y) > shoulderDist * 0.18) || (leftEar && (leftEar.y - leftWrist.y) > 0.03);
+    const rightRaised = (rightShoulder && (rightShoulder.y - rightWrist.y) > shoulderDist * 0.18) || (rightEar && (rightEar.y - rightWrist.y) > 0.03);
     
     if (Math.random() < 0.1) {
       console.log('[ImitationGame] HandsUp detection:', {
@@ -603,7 +607,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
 
     let conf = 0;
     if (leftRaised && rightRaised) conf = 0.95;
-    else if (leftRaised || rightRaised) conf = 0.6; // Higher partial confidence
+    else if (leftRaised || rightRaised) conf = 0.45;
     
     return { confidence: conf };
   };
@@ -625,17 +629,20 @@ const ImitationGame = ({ studentId, onComplete }) => {
       const handSize = Math.hypot(wrist.x - indexMCP.x, wrist.y - indexMCP.y);
       const indexLen = Math.hypot(indexTip.x - indexMCP.x, indexTip.y - indexMCP.y);
       
-      const indexExtended = indexLen > handSize * 0.5; // More forgiving threshold
+      const indexExtended = indexLen > handSize * 0.65;
       
-      const dx = indexTip.x - wrist.x;
-      const pointingLeft = dx < -handSize * 0.3; // More forgiving
-      const pointingRight = dx > handSize * 0.3; // More forgiving
+      // Front-facing camera coordinates are mirrored from the child's perspective,
+      // so invert horizontal delta to map left/right instructions correctly.
+      const dx = wrist.x - indexTip.x;
+      const pointingLeft = dx < -handSize * 0.45;
+      const pointingRight = dx > handSize * 0.45;
       const matchesDir = dir === 'left' ? pointingLeft : pointingRight;
+      const oppositeDir = dir === 'left' ? pointingRight : pointingLeft;
 
       let conf = 0;
       if (indexExtended && matchesDir) conf = 0.95;
-      else if (matchesDir) conf = 0.7; // Higher partial
-      else if (indexExtended) conf = 0.4; // Higher baseline
+      else if (matchesDir) conf = 0.55;
+      else if (indexExtended && oppositeDir) conf = 0;
 
       if (conf > bestConf) bestConf = conf;
     });
@@ -650,8 +657,6 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const landmarks = face?.landmarks?.[0] || face?.faceLandmarks?.[0];
     
     if (!landmarks || hl.length < 1) {
-      // Give some baseline if hand detected but no face
-      if (hl.length > 0) return { confidence: 0.2 };
       return { confidence: 0 };
     }
 
@@ -669,8 +674,8 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const handSize = Math.hypot(wrist.x - indexMCP.x, wrist.y - indexMCP.y);
     const dist = Math.hypot(indexTip.x - mouthX, indexTip.y - mouthY);
     
-    const near = dist < handSize * 1.2; // More forgiving
-    const conf = near ? 0.95 : dist < handSize * 2.0 ? 0.6 : 0.3; // Higher baseline
+    const near = dist < handSize * 0.9;
+    const conf = near ? 0.95 : dist < handSize * 1.2 ? 0.5 : 0;
     return { confidence: conf };
   };
 
@@ -692,13 +697,23 @@ const ImitationGame = ({ studentId, onComplete }) => {
       const handSize = Math.hypot(wrist.x - indexTip.x, wrist.y - indexTip.y);
       const thumbLen = Math.hypot(thumbTip.x - thumbMCP.x, thumbTip.y - thumbMCP.y);
       
-      const thumbExtended = thumbLen > handSize * 0.35; // More forgiving
-      const upward = (wrist.y - thumbTip.y) > handSize * 0.25; // More forgiving
+      const thumbExtended = thumbLen > handSize * 0.4;
+      const upward = (wrist.y - thumbTip.y) > handSize * 0.35;
+
+      const middleTip = h[12];
+      const ringTip = h[16];
+      const pinkyTip = h[20];
+      const middleMCP = h[9];
+      const ringMCP = h[13];
+      const pinkyMCP = h[17];
+
+      const fingersCurled = middleTip && ringTip && pinkyTip && middleMCP && ringMCP && pinkyMCP
+        ? (middleTip.y > middleMCP.y && ringTip.y > ringMCP.y && pinkyTip.y > pinkyMCP.y)
+        : false;
 
       let conf = 0;
-      if (thumbExtended && upward) conf = 0.95;
-      else if (upward) conf = 0.7; // Higher partial
-      else if (thumbExtended) conf = 0.4;
+      if (thumbExtended && upward && fingersCurled) conf = 0.95;
+      else if (thumbExtended && upward) conf = 0.55;
 
       if (conf > bestConf) bestConf = conf;
     });
@@ -709,11 +724,7 @@ const ImitationGame = ({ studentId, onComplete }) => {
   // 8) Prayer – palms/wrists close
   const detectPrayer = (hands) => {
     const hl = getHands(hands);
-    if (hl.length < 2) {
-      // Give partial confidence for having 1 hand in prayer position
-      if (hl.length === 1) return { confidence: 0.3 };
-      return { confidence: 0 };
-    }
+    if (hl.length < 2) return { confidence: 0 };
     const l = hl[0][0];
     const r = hl[1][0];
     if (!l || !r) return { confidence: 0 };
@@ -723,19 +734,19 @@ const ImitationGame = ({ studentId, onComplete }) => {
     const avgHandSize = (lHandSize + rHandSize) / 2;
 
     const dist = Math.hypot(l.x - r.x, l.y - r.y);
-    const near = dist < avgHandSize * 3.0; // More forgiving
-    const touching = dist < avgHandSize * 1.5; // More forgiving
+    const near = dist < avgHandSize * 1.9;
+    const touching = dist < avgHandSize * 1.2;
     
     let conf = 0;
     if (touching) conf = 0.95;
-    else if (near) conf = 0.6; // Higher partial
+    else if (near) conf = 0.5;
 
     return { confidence: conf };
   };
 
   // Final aggregation and backend payload
   const finalizeResults = (finalResults = null) => {
-    const resultsToUse = finalResults || actionResults;
+    const resultsToUse = finalResults || actionResultsRef.current;
     console.log('[ImitationGame] Finalizing results with', resultsToUse.length, 'actions');
     phaseRef.current = 'final_results';
     setPhase('final_results');

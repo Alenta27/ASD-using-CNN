@@ -69,10 +69,23 @@ function ScreeningPage() {
     const [fileName, setFileName] = useState('No file chosen');
         const [latestScreeningMeta, setLatestScreeningMeta] = useState(null);
 
+        const formatInvalidImageMessage = (payload) => {
+            const base = payload?.error || 'Invalid image: upload one clear frontal photo of a single child face.';
+            const faceCount = typeof payload?.faceCount === 'number' ? payload.faceCount : null;
+            if (faceCount === 0) {
+                return `${base} No frontal face was detected.`;
+            }
+            if (faceCount && faceCount > 1) {
+                return `${base} Multiple faces were detected (${faceCount}).`;
+            }
+            return base;
+        };
+
         const getPredictionLabel = (rawPrediction) => {
             const value = String(rawPrediction || '').toLowerCase();
+            if (value.includes('inconclusive') || value.includes('uncertain')) return 'Inconclusive';
             if (value.includes('non') || value.includes('no asd')) return 'No ASD';
-            if (value.includes('autistic') || value.includes('asd')) return 'ASD';
+            if (value.includes('autistic') || value.includes('asd')) return 'ASD Detected';
             return String(rawPrediction || 'Unknown');
         };
 
@@ -96,10 +109,22 @@ function ScreeningPage() {
             if (label === 'No ASD') {
                 return 'The model predicts that the child does not show facial patterns typically associated with ASD based on the analyzed dataset.';
             }
-            if (label === 'ASD') {
+            if (label === 'ASD Detected') {
                 return 'The model predicts that the child shows facial patterns associated with ASD in the analyzed dataset. A clinical follow-up assessment is recommended.';
             }
             return 'The model produced an indeterminate screening output. Please repeat the test with a clear frontal image and consult a clinician for further evaluation.';
+        };
+
+        const getResultClassName = (label) => {
+            if (label === 'No ASD') return 'bg-green-100 border border-green-300';
+            if (label === 'ASD Detected') return 'bg-orange-100 border border-orange-300';
+            return 'bg-yellow-100 border border-yellow-300';
+        };
+
+        const getResultTextClassName = (label) => {
+            if (label === 'No ASD') return 'text-green-700';
+            if (label === 'ASD Detected') return 'text-orange-700';
+            return 'text-yellow-800';
         };
 
         const handleDownloadPdf = () => {
@@ -264,6 +289,9 @@ function ScreeningPage() {
         }
 
         setIsLoading(true);
+        setPredictionResult(null);
+        setLatestScreeningMeta(null);
+        setError('');
 
         const formData = new FormData();
         formData.append('image', selectedFile);
@@ -273,7 +301,8 @@ function ScreeningPage() {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
 
-            const result = response.data;
+                        const result = response.data;
+                        const normalizedLabel = getPredictionLabel(result?.prediction);
             setPredictionResult(result);
             setError('');
 
@@ -282,7 +311,7 @@ function ScreeningPage() {
               id: crypto.randomUUID(),
               createdAt: Date.now(),
               tool: 'ASD Image Screening',
-              prediction: result?.prediction ?? 'Unknown',
+                            prediction: normalizedLabel,
               confidence: typeof result?.confidence === 'number' ? result.confidence : undefined,
               childId: child?.id || null,
               childName: child?.name || 'Unassigned',
@@ -294,7 +323,11 @@ function ScreeningPage() {
                             generatedAt: Date.now(),
                         });
         } catch (err) {
-            const errorMessage = err.response?.data?.error || 'An error occurred during prediction. Please try again.';
+            const payload = err.response?.data;
+            const errorMessage = payload?.code === 'INVALID_IMAGE'
+                ? formatInvalidImageMessage(payload)
+                : (payload?.error || 'An error occurred during prediction. Please try again.');
+            setPredictionResult(null);
             setError(errorMessage);
             console.error(err);
         } finally {
@@ -320,6 +353,9 @@ function ScreeningPage() {
                     <p className="text-center text-gray-600 mb-2">
                         Upload a facial image to get a preliminary screening result or <Link to="/questionnaire" className="text-blue-600 hover:underline">fill out a questionnaire</Link>.
                     </p>
+                                        <p className="text-center text-sm text-amber-700 mb-4">
+                                            Valid image rule: only approved dataset images are accepted, and they must show one clear frontal child face. Group photos, screenshots, scenery, and non-dataset photos are rejected.
+                                        </p>
                     {child && (
                       <p className="text-center text-sm text-gray-500 mb-6">Child: <span className="font-medium">{child.name}</span></p>
                     )}
@@ -363,11 +399,11 @@ function ScreeningPage() {
                     {predictionResult && (
                         <div className="mt-8 border-t pt-6">
                             <h3 className="text-2xl font-semibold text-gray-800 mb-4">Screening Result:</h3>
-                            <div className={`p-4 rounded-lg ${predictionResult.prediction === 'Autistic' ? 'bg-orange-100 border border-orange-300' : 'bg-green-100 border border-green-300'}`}>
+                            <div className={`p-4 rounded-lg ${getResultClassName(getPredictionLabel(predictionResult.prediction))}`}>
                                 <p className="text-lg">
                                     <span className="font-bold">Prediction:</span> 
-                                    <span className={`ml-2 font-semibold ${predictionResult.prediction === 'Autistic' ? 'text-orange-700' : 'text-green-700'}`}>
-                                        {predictionResult.prediction}
+                                    <span className={`ml-2 font-semibold ${getResultTextClassName(getPredictionLabel(predictionResult.prediction))}`}>
+                                        {getPredictionLabel(predictionResult.prediction)}
                                     </span>
                                 </p>
                                 <p className="text-lg mt-2">
@@ -376,6 +412,11 @@ function ScreeningPage() {
                                         {typeof predictionResult.confidence === 'number' ? (predictionResult.confidence * 100).toFixed(2) + '%' : '—'}
                                     </span>
                                 </p>
+                                {getPredictionLabel(predictionResult.prediction) === 'Inconclusive' && (
+                                    <p className="text-sm text-yellow-900 mt-3 font-semibold">
+                                        Result is inconclusive. Please upload one clear, frontal photo of only one child.
+                                    </p>
+                                )}
                                 <p className="text-sm text-gray-600 mt-4">
     <strong>Note on Confidence:</strong> The confidence score reflects the model's certainty in its prediction based on the patterns it has learned from the data. It is not a measure of the likelihood of having ASD.
 </p>

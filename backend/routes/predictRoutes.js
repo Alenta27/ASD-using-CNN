@@ -7,6 +7,12 @@ const trackScreening = require('../utils/trackScreening');
 
 const upload = multer({ dest: 'uploads/' });
 const router = express.Router();
+const INVALID_INPUT_MESSAGE = "Invalid image: upload one clear frontal photo of a single child face.";
+
+const toNumberOrNull = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+};
 
 router.post('/', upload.single('image'), (req, res) => {
     console.log('🔷 [Facial Prediction] Request received');
@@ -95,18 +101,34 @@ router.post('/', upload.single('image'), (req, res) => {
             // Check if there's an error in the result (like "No face detected")
             if (predictionResult.error) {
                 console.log('⚠️  [Facial Prediction] Prediction error:', predictionResult.error);
-                return res.status(400).json({ error: predictionResult.error });
+                const message = String(predictionResult.error || '').trim();
+                const code = String(predictionResult.code || '').trim().toUpperCase();
+                if (code === 'INVALID_IMAGE' || message.toLowerCase().includes('invalid input') || message.toLowerCase().includes('invalid image')) {
+                    return res.status(400).json({
+                        error: message || INVALID_INPUT_MESSAGE,
+                        code: 'INVALID_IMAGE',
+                        reason: String(predictionResult.reason || '').trim() || null,
+                        faceCount: toNumberOrNull(predictionResult.faceCount),
+                        faceAreaRatio: toNumberOrNull(predictionResult.faceAreaRatio)
+                    });
+                }
+                return res.status(400).json({ error: message || INVALID_INPUT_MESSAGE });
             }
+
+            const rawLabel = String(predictionResult.prediction || '').trim();
+            const confidence = toNumberOrNull(predictionResult.confidence);
+            const finalLabel = rawLabel || 'No ASD';
             
             // Map prediction to risk level
-            const riskMap = { 
-                'ASD Detected': 'high_risk', 
+            const riskMap = {
+                'ASD Detected': 'high_risk',
                 'No ASD': 'low_risk',
-                'ASD': 'high_risk', 
-                'Non-ASD': 'low_risk' 
+                'Autistic': 'high_risk',
+                'Non-Autistic': 'low_risk',
+                'Inconclusive': null
             };
-            const resultLabel = predictionResult.prediction;
-            const resultScore = predictionResult.confidence || 0.5;
+            const resultLabel = finalLabel;
+            const resultScore = confidence !== null ? confidence : 0.5;
             
             console.log('✅ [Facial Prediction] Success:', {
                 prediction: resultLabel,
@@ -126,7 +148,12 @@ router.post('/', upload.single('image'), (req, res) => {
                 fileUrl: `/uploads/${req.file.filename}`
             });
             
-            res.json(predictionResult);
+            res.json({
+                ...predictionResult,
+                prediction: resultLabel,
+                confidence: resultScore,
+                modelState: resultLabel === 'Inconclusive' ? 'inconclusive' : 'final'
+            });
         } catch (e) {
             console.error('❌ [Facial Prediction] Failed to parse prediction result:', e);
             console.error('Raw output from Python:', predictionData);

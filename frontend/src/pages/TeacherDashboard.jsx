@@ -3,16 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { FiHome, FiUsers, FiClipboard, FiBarChart2, FiSettings, FiLogOut, FiActivity } from 'react-icons/fi';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import ASDRiskEstimator from '../components/ASDRiskEstimator';
+import AwarenessHub from '../components/awareness/AwarenessHub';
 import './TeacherDashboard.css';
-
-const progressChartData = [
-  { month: 'Aug', progress: 45 },
-  { month: 'Sep', progress: 52 },
-  { month: 'Oct', progress: 58 },
-  { month: 'Nov', progress: 65 },
-  { month: 'Dec', progress: 72 },
-  { month: 'Jan', progress: 78 },
-];
 
 const Sidebar = ({ activeNav, onNavClick, onLogout }) => {
   const navItems = [
@@ -69,6 +61,7 @@ const MainContent = ({
   stats,
   students,
   loading,
+  progressChartData = [],
   onViewStudents = () => {},
   onReviewScreenings = () => {},
   onViewStudent = () => {},
@@ -196,6 +189,8 @@ const MainContent = ({
         </div>
       </div>
 
+      <AwarenessHub />
+
       {showRiskEstimator && (
         <ASDRiskEstimator onClose={onToggleRiskEstimator} />
       )}
@@ -218,6 +213,18 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true);
   const [showRiskEstimator, setShowRiskEstimator] = useState(false);
 
+  // Dummy progress chart data
+  const progressChartData = [
+    { month: 'Aug', progress: 45 },
+    { month: 'Sep', progress: 52 },
+    { month: 'Oct', progress: 58 },
+    { month: 'Nov', progress: 65 },
+    { month: 'Dec', progress: 72 },
+    { month: 'Jan', progress: 78 },
+    { month: 'Feb', progress: 85 },
+    { month: 'Mar', progress: 89 },
+  ];
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -232,9 +239,11 @@ export default function TeacherDashboard() {
           'Content-Type': 'application/json',
         };
 
-        const profileRes = await fetch('http://localhost:5000/api/teacher/profile', { headers });
-        const studentsRes = await fetch('http://localhost:5000/api/teacher/students', { headers });
-        const statsRes = await fetch('http://localhost:5000/api/teacher/class-stats', { headers });
+        const API_BASE = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+
+        const profileRes = await fetch(`${API_BASE}/api/teacher/profile`, { headers });
+        const studentsRes = await fetch(`${API_BASE}/api/teacher/students`, { headers });
+        const statsRes = await fetch(`${API_BASE}/api/teacher/class-stats`, { headers });
 
         let profileData = {};
         let studentsData = [];
@@ -332,6 +341,7 @@ export default function TeacherDashboard() {
         stats={stats}
         students={students}
         loading={loading}
+        progressChartData={progressChartData}
         onViewStudents={goToStudents}
         onReviewScreenings={goToScreenings}
         onViewStudent={goToStudentProfile}

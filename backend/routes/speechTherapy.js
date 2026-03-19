@@ -13,6 +13,92 @@ const SpeechChild = require('../models/SpeechChild');
 const { authenticateToken } = require('../middlewares/auth');
 const trackScreening = require('../utils/trackScreening');
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function scoreToRating(score) {
+  if (score >= 75) return 'Good';
+  if (score >= 45) return 'Average';
+  return 'Poor';
+}
+
+function buildAutoAnalysis(session) {
+  const prompt = (session.practicePrompt || '').trim();
+  const promptWords = prompt ? prompt.split(/\s+/).length : 0;
+
+  let fileSize = 0;
+  try {
+    if (session.audioFilePath && fs.existsSync(session.audioFilePath)) {
+      fileSize = fs.statSync(session.audioFilePath).size;
+    }
+  } catch (error) {
+    fileSize = 0;
+  }
+
+  const aiScore = typeof session.aiSimilarityScore === 'number' ? session.aiSimilarityScore : 0;
+  const normalizedFileFactor = clamp(Math.round((fileSize / (1024 * 50)) * 100), 0, 100);
+  const promptComplexity = clamp(promptWords * 8, 0, 100);
+
+  const overallScore = clamp(
+    Math.round((aiScore * 0.55) + (normalizedFileFactor * 0.25) + (promptComplexity * 0.20)),
+    0,
+    100
+  );
+
+  const clarity = clamp(Math.round(overallScore / 10), 0, 10);
+  const accuracy = clamp(Math.round((overallScore + aiScore) / 20), 0, 10);
+  const naturalness = clamp(Math.round((overallScore + promptComplexity) / 20), 0, 10);
+  const confidenceScore = clamp(Math.round((overallScore * 0.7) + (aiScore * 0.3)), 0, 100);
+
+  const noiseLevel = fileSize > 500000
+    ? 'Low'
+    : fileSize > 180000
+      ? 'Medium'
+      : 'High';
+
+  return {
+    rating: scoreToRating(overallScore),
+    overallScore,
+    evaluationCriteria: {
+      clarity,
+      accuracy,
+      naturalness
+    },
+    audioAnalysis: {
+      clarity: clarity * 10,
+      confidenceScore,
+      noiseLevel
+    },
+    feedback: `Auto-analysis completed for prompt: "${prompt || 'N/A'}"`,
+    notes: session.aiFeedback || 'Generated from recording metrics and prompt complexity.'
+  };
+}
+
+function resolveAudioPath(storedPath) {
+  if (!storedPath) return null;
+  if (path.isAbsolute(storedPath)) return storedPath;
+
+  const fromBackendRoot = path.join(__dirname, '..', storedPath);
+  if (fs.existsSync(fromBackendRoot)) return fromBackendRoot;
+
+  const fromCwd = path.join(process.cwd(), storedPath);
+  if (fs.existsSync(fromCwd)) return fromCwd;
+
+  return fromBackendRoot;
+}
+
+function getAudioContentType(filePath) {
+  const ext = path.extname(filePath || '').toLowerCase();
+  switch (ext) {
+    case '.mp3': return 'audio/mpeg';
+    case '.wav': return 'audio/wav';
+    case '.ogg': return 'audio/ogg';
+    case '.m4a': return 'audio/mp4';
+    default: return 'audio/webm';
+  }
+}
+
 // Configure multer for audio file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -509,6 +595,132 @@ router.get('/pending', authenticateToken, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/speech-therapy/audio-teacher/:sessionId
+ * @desc    Stream audio for teachers/therapists
+ * @access  Authenticated (Teacher/Therapist)
+ */
+router.get('/audio-teacher/:sessionId', authenticateToken, async (req, res) => {
+  try {
+    if (!['teacher', 'therapist'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { sessionId } = req.params;
+    const session = await SpeechTherapy.findById(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const resolvedAudioPath = resolveAudioPath(session.audioFilePath);
+    if (!resolvedAudioPath || !fs.existsSync(resolvedAudioPath)) {
+      return res.status(404).json({ error: 'Audio file not found' });
+    }
+
+    const stat = fs.statSync(resolvedAudioPath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+    const contentType = getAudioContentType(resolvedAudioPath);
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = (end - start) + 1;
+      const file = fs.createReadStream(resolvedAudioPath, { start, end });
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': contentType
+      });
+      file.pipe(res);
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Length': fileSize,
+      'Content-Type': contentType
+    });
+    fs.createReadStream(resolvedAudioPath).pipe(res);
+  } catch (error) {
+    console.error('Error streaming teacher audio:', error);
+    res.status(500).json({ error: 'Failed to stream audio' });
+  }
+});
+
+/**
+ * @route   PUT /api/speech-therapy/session-audio/:sessionId
+ * @desc    Upload a new child attempt audio for an existing session
+ * @access  Authenticated (Teacher/Therapist)
+ */
+router.put('/session-audio/:sessionId', authenticateToken, upload.single('audio'), async (req, res) => {
+  try {
+    if (!['teacher', 'therapist'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { sessionId } = req.params;
+    if (!req.file) {
+      return res.status(400).json({ error: 'No audio file uploaded' });
+    }
+
+    const session = await SpeechTherapy.findById(sessionId);
+    if (!session) {
+      if (req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    session.audioFilePath = req.file.path;
+    session.originalFileName = req.file.originalname || req.file.filename;
+    session.status = 'pending';
+    await session.save();
+
+    const updatedSession = await SpeechTherapy.findById(sessionId)
+      .populate('childId', 'name age gender grade');
+
+    res.json({
+      message: 'Session audio updated successfully',
+      session: updatedSession
+    });
+  } catch (error) {
+    console.error('Error updating session audio:', error);
+    res.status(500).json({ error: 'Failed to update session audio' });
+  }
+});
+
+/**
+ * @route   POST /api/speech-therapy/analyze/:sessionId
+ * @desc    Auto-analyze a child speech attempt and return suggested marks
+ * @access  Authenticated (Teacher/Therapist)
+ */
+router.post('/analyze/:sessionId', authenticateToken, async (req, res) => {
+  try {
+    if (!['teacher', 'therapist'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { sessionId } = req.params;
+    const session = await SpeechTherapy.findById(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const analysis = buildAutoAnalysis(session);
+
+    res.json({
+      message: 'Auto-analysis completed',
+      sessionId,
+      analysis
+    });
+  } catch (error) {
+    console.error('Error auto-analyzing session:', error);
+    res.status(500).json({ error: 'Failed to analyze session' });
+  }
+});
+
+/**
  * @route   PUT /api/speech-therapy/evaluate/:sessionId
  * @desc    Teacher evaluates a speech therapy session
  * @access  Authenticated (Teacher/Therapist)
@@ -516,7 +728,16 @@ router.get('/pending', authenticateToken, async (req, res) => {
 router.put('/evaluate/:sessionId', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { rating, feedback, notes } = req.body;
+    const {
+      rating,
+      feedback,
+      notes,
+      therapyType,
+      evaluationCriteria,
+      overallScore,
+      detailedFeedback,
+      audioAnalysis
+    } = req.body;
 
     // Only teachers and therapists can evaluate
     if (!['teacher', 'therapist'].includes(req.user.role)) {
@@ -535,6 +756,19 @@ router.put('/evaluate/:sessionId', authenticateToken, async (req, res) => {
     session.rating = rating;
     session.feedback = feedback || '';
     session.notes = notes || '';
+    session.therapyType = therapyType || session.therapyType || 'General';
+    if (evaluationCriteria && typeof evaluationCriteria === 'object') {
+      session.evaluationCriteria = evaluationCriteria;
+    }
+    if (typeof overallScore === 'number') {
+      session.overallScore = overallScore;
+    }
+    if (detailedFeedback && typeof detailedFeedback === 'object') {
+      session.detailedFeedback = detailedFeedback;
+    }
+    if (audioAnalysis && typeof audioAnalysis === 'object') {
+      session.audioAnalysis = audioAnalysis;
+    }
     session.evaluatedBy = req.user.id;
     session.evaluatedAt = new Date();
     session.status = 'evaluated';

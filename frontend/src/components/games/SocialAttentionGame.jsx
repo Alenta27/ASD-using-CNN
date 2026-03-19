@@ -466,9 +466,12 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
     }
     
     // 4. GAZE CALCULATION
-    // Compute gazeX using average X of FaceMesh eye landmarks: 33, 133, 362, 263
-    const gazeX = (landmarks[33].x + landmarks[133].x + landmarks[362].x + landmarks[263].x) / 4;
-    gazeXRef.current = gazeX;
+    // Compute camera-space X using average X of FaceMesh eye landmarks: 33, 133, 362, 263.
+    // Convert to screen-space X because webcam coordinates are horizontally inverted
+    // relative to what the child sees on-screen during the left/right stimulus task.
+    const cameraGazeX = (landmarks[33].x + landmarks[133].x + landmarks[362].x + landmarks[263].x) / 4;
+    const screenGazeX = 1 - cameraGazeX;
+    gazeXRef.current = screenGazeX;
     
     // Track total valid gaze time (any frame where face is detected)
     totalValidGazeTimeRef.current += deltaTime;
@@ -476,17 +479,17 @@ const SocialAttentionGame = ({ studentId, onComplete }) => {
     // 5. ZONE LOGIC
     let gazeZone = 'center';
     
-    // LEFT (social): gazeX < 0.33
-    if (gazeX < 0.33) {
+    // LEFT (social): screenGazeX < 0.45
+    if (screenGazeX < 0.45) {
       gazeZone = 'left';
       leftTimeRef.current += deltaTime;
     } 
-    // RIGHT (non-social): gazeX > 0.66
-    else if (gazeX > 0.66) {
+    // RIGHT (non-social): screenGazeX > 0.55
+    else if (screenGazeX > 0.55) {
       gazeZone = 'right';
       rightTimeRef.current += deltaTime;
     }
-    // CENTER: 0.33 <= gazeX <= 0.66 → split time
+    // CENTER: 0.45 <= screenGazeX <= 0.55 → split time
     else {
       gazeZone = 'center';
       leftTimeRef.current += deltaTime * 0.5;

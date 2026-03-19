@@ -189,6 +189,38 @@ try {
   console.error('Attention Results Routes Error:', e.message);
 }
 
+// ✅ Student Notes Routes
+try {
+  app.use('/api/notes', require('./routes/notes'));
+  console.log('✅ Notes Routes Registered');
+} catch (e) {
+  console.error('Notes Routes Error:', e.message);
+}
+
+// ✅ Schedule Routes
+try {
+  app.use('/api/schedule', require('./routes/schedule'));
+  console.log('✅ Schedule Routes Registered');
+} catch (e) {
+  console.error('Schedule Routes Error:', e.message);
+}
+
+// ✅ Therapy Sessions Routes
+try {
+  app.use('/api/therapy-sessions', require('./routes/therapySessions'));
+  console.log('✅ Therapy Sessions Routes Registered');
+} catch (e) {
+  console.error('Therapy Sessions Routes Error:', e.message);
+}
+
+// ✅ Notifications Routes
+try {
+  app.use('/api/notifications', require('./routes/notifications'));
+  console.log('✅ Notifications Routes Registered');
+} catch (e) {
+  console.error('Notifications Routes Error:', e.message);
+}
+
 // ✅ MRI Scan Model: accept file upload and return stub JSON
 const multer = require('multer');
 

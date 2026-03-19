@@ -308,7 +308,12 @@ function normalizeGameMetrics(gameData) {
   // Imitation: imitation success
   if (gameData['imitation']) {
     const metrics = gameData['imitation'].metrics || {};
-    normalized.imitationSuccess = metrics.imitationScore || gameData['imitation'].score || 0;
+    normalized.imitationSuccess =
+      metrics.imitationAccuracy ||
+      metrics.imitationScore ||
+      gameData['imitation'].imitationAccuracy ||
+      gameData['imitation'].score ||
+      0;
   }
 
   // Sound Sensitivity: sensory reaction
