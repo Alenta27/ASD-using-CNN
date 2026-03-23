@@ -148,6 +148,14 @@ try {
   console.error('Behavioral Routes Error:', e.message);
 }
 
+// ✅ Behavioral Audio Capture Routes
+try {
+  app.use('/api', require('./routes/audioCapture'));
+  console.log('✅ Audio Capture Routes Registered');
+} catch (e) {
+  console.error('Audio Capture Routes Error:', e.message);
+}
+
 // ✅ Social Attention Test Routes
 try {
   const socialAttentionRoutes = require('./routes/socialAttention');

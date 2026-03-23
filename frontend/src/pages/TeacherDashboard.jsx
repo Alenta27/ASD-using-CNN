@@ -4,6 +4,7 @@ import { FiHome, FiUsers, FiClipboard, FiBarChart2, FiSettings, FiLogOut, FiActi
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import ASDRiskEstimator from '../components/ASDRiskEstimator';
 import AwarenessHub from '../components/awareness/AwarenessHub';
+import TeacherAudioCapture from '../components/TeacherAudioCapture';
 import './TeacherDashboard.css';
 
 const Sidebar = ({ activeNav, onNavClick, onLogout }) => {
@@ -69,6 +70,8 @@ const MainContent = ({
   onAccessResources = () => {},
   showRiskEstimator = false,
   onToggleRiskEstimator = () => {},
+  selectedAudioStudentId = '',
+  onAudioStudentChange = () => {},
 }) => {
   const recentActivities = Array.isArray(students)
     ? students.slice(0, 3).map((student, idx) => {
@@ -191,6 +194,29 @@ const MainContent = ({
 
       <AwarenessHub />
 
+      <div className="widget" style={{ marginTop: '24px' }}>
+        <div className="widget-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+          <h3 className="widget-title">Behavioral Audio Capture</h3>
+          <select
+            value={selectedAudioStudentId}
+            onChange={(e) => onAudioStudentChange(e.target.value)}
+            style={{ border: '1px solid #d1d5db', borderRadius: '8px', padding: '8px 10px', minWidth: '220px' }}
+          >
+            <option value="">Select Student</option>
+            {(students || []).map((student) => (
+              <option key={student._id || student.id} value={student._id || student.id}>
+                {student.name || 'Student'}
+              </option>
+            ))}
+          </select>
+        </div>
+        {selectedAudioStudentId ? (
+          <TeacherAudioCapture studentId={selectedAudioStudentId} />
+        ) : (
+          <p className="empty-message">Select a student to start background audio capture and view recordings.</p>
+        )}
+      </div>
+
       {showRiskEstimator && (
         <ASDRiskEstimator onClose={onToggleRiskEstimator} />
       )}
@@ -212,6 +238,7 @@ export default function TeacherDashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [showRiskEstimator, setShowRiskEstimator] = useState(false);
+  const [selectedAudioStudentId, setSelectedAudioStudentId] = useState('');
 
   // Dummy progress chart data
   const progressChartData = [
@@ -258,7 +285,12 @@ export default function TeacherDashboard() {
 
         if (studentsRes.ok) {
           studentsData = await studentsRes.json();
-          setStudents(Array.isArray(studentsData) ? studentsData : []);
+          const normalizedStudents = Array.isArray(studentsData) ? studentsData : [];
+          setStudents(normalizedStudents);
+          if (!selectedAudioStudentId && normalizedStudents.length > 0) {
+            const defaultStudentId = normalizedStudents[0]._id || normalizedStudents[0].id || '';
+            setSelectedAudioStudentId(String(defaultStudentId));
+          }
         }
 
         if (statsRes.ok) {
@@ -273,7 +305,7 @@ export default function TeacherDashboard() {
     };
 
     fetchData();
-  }, [navigate]);
+  }, [navigate, selectedAudioStudentId]);
 
   const handleNavClick = (path) => {
     const navMap = {
@@ -349,6 +381,8 @@ export default function TeacherDashboard() {
         onAccessResources={goToResources}
         showRiskEstimator={showRiskEstimator}
         onToggleRiskEstimator={handleToggleRiskEstimator}
+        selectedAudioStudentId={selectedAudioStudentId}
+        onAudioStudentChange={setSelectedAudioStudentId}
       />
     </div>
   );
