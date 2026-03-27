@@ -25,6 +25,7 @@ import AdminChildrenRegistrationPage from './pages/AdminChildrenRegistrationPage
 import TeacherStudentsPage from './pages/TeacherStudentsPage';
 import TeacherScreeningsPage from './pages/TeacherScreeningsPage';
 import TeacherReportsPage from './pages/TeacherReportsPage';
+import TeacherMultiScreeningPage from './pages/TeacherMultiScreeningPage';
 import StudentProfilePage from './pages/StudentProfilePage';
 import TeacherBehavioralAssessmentsPage from './pages/TeacherBehavioralAssessmentsPage';
 import TeacherBehavioralAssessmentDetailPage from './pages/TeacherBehavioralAssessmentDetailPage';
@@ -113,6 +114,7 @@ function App() {
           <Route path="/parent/care-team" element={<ParentCareTeamPage />} />
           <Route path="/parent/resources" element={<ParentResourcesPage />} />
           <Route path="/parent/settings" element={<ParentSettingsPage />} />
+          <Route path="/parent/child/:childId" element={<StudentProfilePage />} />
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/users" element={<AdminUsersPage />} />
@@ -167,6 +169,7 @@ function App() {
           <Route path="/teacher/assessments/analysis/:studentId" element={<BehavioralAnalysisReportPage />} />
           <Route path="/teacher/reports" element={<TeacherReportsPage />} />
           <Route path="/teacher/speech-therapy" element={<SpeechTherapyDashboard />} />
+          <Route path="/teacher/multi-screening" element={<TeacherMultiScreeningPage />} />
           <Route path="/teacher/insights" element={<TeacherDashboard />} />
           <Route path="/teacher/feedback" element={<TeacherDashboard />} />
           <Route path="/teacher/settings" element={<TeacherDashboard />} />

@@ -958,4 +958,109 @@ async function triggerKNNAnalysis(gameId, studentId, metrics) {
   }
 }
 
+/**
+ * @route   GET /api/teacher/class-progress
+ * @desc    Get average child progress by month (aggregated from screenings & assessments)
+ * @access  Private (Teacher only)
+ * @returns Array of {month, progress} for chart
+ */
+router.get('/class-progress', async (req, res) => {
+  try {
+    const teacherId = req.user.id;
+
+    // Step 1: Get all students for this teacher
+    const teacherQuery = await getTeacherStudentQuery(teacherId);
+    const students = await Patient.find(teacherQuery).select('_id');
+    
+    if (students.length === 0) {
+      // Return empty data structure with all months
+      const emptyData = generateMonthlyData([]);
+      return res.json(emptyData);
+    }
+
+    const studentIds = students.map(s => s._id);
+
+    // Step 2: Fetch screenings for these students, aggregated by month
+    const screenings = await Screening.find({
+      patientId: { $in: studentIds },
+      resultScore: { $exists: true, $ne: null }
+    }).select('resultScore createdAt');
+
+    // Step 3: Fetch behavioral assessments, aggregated by month
+    const BehavioralAssessment = require('../models/BehavioralAssessment');
+    const assessments = await BehavioralAssessment.find({
+      patientId: { $in: studentIds }
+    }).select('overallScore createdAt');
+
+    // Step 4: Combine and aggregate data by month
+    const allScores = [
+      ...screenings.map(s => ({
+        score: (s.resultScore || 0) * 100, // Convert 0-1 to 0-100
+        date: new Date(s.createdAt)
+      })),
+      ...assessments.map(a => ({
+        score: (a.overallScore || 0),
+        date: new Date(a.createdAt)
+      }))
+    ];
+
+    // Step 5: Generate monthly averages
+    const progressData = generateMonthlyData(allScores);
+
+    res.json(progressData);
+  } catch (error) {
+    console.error('Error fetching class progress:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch class progress',
+      details: error.message 
+    });
+  }
+});
+
+/**
+ * Helper: Generate monthly progress data
+ * @param {Array} scores - Array of {score, date} objects
+ * @returns {Array} Array of {month, progress} for charting
+ */
+function generateMonthlyData(scores) {
+  // Define the months (Aug to Mar, 2025)
+  const months = [
+    { key: 'Aug', month: 8, year: 2025 },
+    { key: 'Sep', month: 9, year: 2025 },
+    { key: 'Oct', month: 10, year: 2025 },
+    { key: 'Nov', month: 11, year: 2025 },
+    { key: 'Dec', month: 12, year: 2025 },
+    { key: 'Jan', month: 1, year: 2026 },
+    { key: 'Feb', month: 2, year: 2026 },
+    { key: 'Mar', month: 3, year: 2026 }
+  ];
+
+  // Group scores by month
+  const monthlyScores = {};
+  months.forEach(m => {
+    monthlyScores[m.key] = [];
+  });
+
+  scores.forEach(({ score, date }) => {
+    const month = date.getMonth() + 1; // 1-12
+    const year = date.getFullYear();
+    
+    // Find matching month
+    const monthObj = months.find(m => m.month === month && m.year === year);
+    if (monthObj) {
+      monthlyScores[monthObj.key].push(score);
+    }
+  });
+
+  // Calculate averages
+  const progressData = months.map(m => ({
+    month: m.key,
+    progress: monthlyScores[m.key].length > 0
+      ? Math.round(monthlyScores[m.key].reduce((a, b) => a + b, 0) / monthlyScores[m.key].length)
+      : 0
+  }));
+
+  return progressData;
+}
+
 module.exports = router;

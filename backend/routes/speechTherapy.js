@@ -36,20 +36,30 @@ function buildAutoAnalysis(session) {
     fileSize = 0;
   }
 
-  const aiScore = typeof session.aiSimilarityScore === 'number' ? session.aiSimilarityScore : 0;
+  const hasAiScore = typeof session.aiSimilarityScore === 'number' && Number.isFinite(session.aiSimilarityScore);
+  const fallbackAiScore = clamp(60 + Math.round(promptWords * 2), 60, 80);
+  const aiScore = hasAiScore ? session.aiSimilarityScore : fallbackAiScore;
   const normalizedFileFactor = clamp(Math.round((fileSize / (1024 * 50)) * 100), 0, 100);
   const promptComplexity = clamp(promptWords * 8, 0, 100);
 
-  const overallScore = clamp(
-    Math.round((aiScore * 0.55) + (normalizedFileFactor * 0.25) + (promptComplexity * 0.20)),
-    0,
-    100
-  );
+  const overallScore = hasAiScore
+    ? clamp(
+      Math.round((aiScore * 0.55) + (normalizedFileFactor * 0.25) + (promptComplexity * 0.20)),
+      0,
+      100
+    )
+    : clamp(
+      Math.round((aiScore * 0.65) + (normalizedFileFactor * 0.20) + (promptComplexity * 0.15)),
+      45,
+      90
+    );
 
   const clarity = clamp(Math.round(overallScore / 10), 0, 10);
   const accuracy = clamp(Math.round((overallScore + aiScore) / 20), 0, 10);
   const naturalness = clamp(Math.round((overallScore + promptComplexity) / 20), 0, 10);
-  const confidenceScore = clamp(Math.round((overallScore * 0.7) + (aiScore * 0.3)), 0, 100);
+  const confidenceScore = hasAiScore
+    ? clamp(Math.round((overallScore * 0.7) + (aiScore * 0.3)), 0, 100)
+    : clamp(Math.round((overallScore * 0.8) + (normalizedFileFactor * 0.2)), 45, 92);
 
   const noiseLevel = fileSize > 500000
     ? 'Low'
@@ -71,7 +81,9 @@ function buildAutoAnalysis(session) {
       noiseLevel
     },
     feedback: `Auto-analysis completed for prompt: "${prompt || 'N/A'}"`,
-    notes: session.aiFeedback || 'Generated from recording metrics and prompt complexity.'
+    notes: session.aiFeedback || (hasAiScore
+      ? 'Generated from recording metrics and prompt complexity.'
+      : 'Generated from recording quality and prompt complexity (transcript score unavailable).')
   };
 }
 
@@ -97,6 +109,46 @@ function getAudioContentType(filePath) {
     case '.m4a': return 'audio/mp4';
     default: return 'audio/webm';
   }
+}
+
+function detectAudioContentTypeFromFile(filePath) {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const header = Buffer.alloc(16);
+    fs.readSync(fd, header, 0, 16, 0);
+    fs.closeSync(fd);
+
+    if (header.slice(0, 4).toString('ascii') === 'RIFF' && header.slice(8, 12).toString('ascii') === 'WAVE') {
+      return 'audio/wav';
+    }
+    if (header.slice(0, 4).toString('ascii') === 'OggS') {
+      return 'audio/ogg';
+    }
+    if (header.slice(0, 3).toString('ascii') === 'ID3') {
+      return 'audio/mpeg';
+    }
+    if (header.slice(4, 8).toString('ascii') === 'ftyp') {
+      return 'audio/mp4';
+    }
+    if (header[0] === 0x1A && header[1] === 0x45 && header[2] === 0xDF && header[3] === 0xA3) {
+      return 'audio/webm';
+    }
+  } catch (error) {
+    // Fallback to extension-based detection
+  }
+
+  return null;
+}
+
+function resolveSessionAudioContentType(session, resolvedAudioPath) {
+  if (session?.audioMimeType && session.audioMimeType.startsWith('audio/')) {
+    return session.audioMimeType;
+  }
+
+  const byHeader = detectAudioContentTypeFromFile(resolvedAudioPath);
+  if (byHeader) return byHeader;
+
+  return getAudioContentType(session?.originalFileName || resolvedAudioPath);
 }
 
 // Configure multer for audio file uploads
@@ -487,6 +539,7 @@ router.post('/upload', upload.single('audio'), async (req, res) => {
     const sessionData = {
       audioFilePath: req.file.path,
       originalFileName: req.file.originalname,
+      audioMimeType: req.file.mimetype,
       practicePrompt: practicePrompt || '',
       sampleAudioPath: sampleAudioPath || '',
       language: language || 'English',
@@ -619,7 +672,7 @@ router.get('/audio-teacher/:sessionId', authenticateToken, async (req, res) => {
     const stat = fs.statSync(resolvedAudioPath);
     const fileSize = stat.size;
     const range = req.headers.range;
-    const contentType = getAudioContentType(resolvedAudioPath);
+    const contentType = resolveSessionAudioContentType(session, resolvedAudioPath);
 
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
@@ -674,6 +727,7 @@ router.put('/session-audio/:sessionId', authenticateToken, upload.single('audio'
 
     session.audioFilePath = req.file.path;
     session.originalFileName = req.file.originalname || req.file.filename;
+    session.audioMimeType = req.file.mimetype;
     session.status = 'pending';
     await session.save();
 
@@ -936,6 +990,7 @@ router.get('/audio/:sessionId', async (req, res) => {
     const stat = fs.statSync(session.audioFilePath);
     const fileSize = stat.size;
     const range = req.headers.range;
+    const contentType = resolveSessionAudioContentType(session, session.audioFilePath);
 
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
@@ -947,14 +1002,14 @@ router.get('/audio/:sessionId', async (req, res) => {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
-        'Content-Type': 'audio/webm',
+        'Content-Type': contentType,
       };
       res.writeHead(206, head);
       file.pipe(res);
     } else {
       const head = {
         'Content-Length': fileSize,
-        'Content-Type': 'audio/webm',
+        'Content-Type': contentType,
       };
       res.writeHead(200, head);
       fs.createReadStream(session.audioFilePath).pipe(res);

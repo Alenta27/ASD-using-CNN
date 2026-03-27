@@ -4,7 +4,6 @@ import { FiHome, FiUsers, FiClipboard, FiBarChart2, FiSettings, FiLogOut, FiActi
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import ASDRiskEstimator from '../components/ASDRiskEstimator';
 import AwarenessHub from '../components/awareness/AwarenessHub';
-import TeacherAudioCapture from '../components/TeacherAudioCapture';
 import './TeacherDashboard.css';
 
 const Sidebar = ({ activeNav, onNavClick, onLogout }) => {
@@ -14,6 +13,7 @@ const Sidebar = ({ activeNav, onNavClick, onLogout }) => {
     { id: 'screenings', label: 'Student Screenings', icon: FiClipboard, path: '/teacher/screenings' },
     { id: 'assessments', label: 'Behavioral Assessments', icon: FiActivity, path: '/teacher/assessments' },
     { id: 'speech-therapy', label: 'Speech Therapy', icon: FiActivity, path: '/teacher/speech-therapy' },
+    { id: 'multi-screening', label: 'Multi-Disorder Screening', icon: FiActivity, path: '/teacher/multi-screening' },
     { id: 'reports', label: 'Progress Reports', icon: FiBarChart2, path: '/teacher/reports' },
   ];
 
@@ -63,15 +63,16 @@ const MainContent = ({
   students,
   loading,
   progressChartData = [],
+  chartLoading = false,
+  chartError = null,
   onViewStudents = () => {},
   onReviewScreenings = () => {},
   onViewStudent = () => {},
   onCreateReport = () => {},
+  onOpenMultiScreening = () => {},
   onAccessResources = () => {},
   showRiskEstimator = false,
   onToggleRiskEstimator = () => {},
-  selectedAudioStudentId = '',
-  onAudioStudentChange = () => {},
 }) => {
   const recentActivities = Array.isArray(students)
     ? students.slice(0, 3).map((student, idx) => {
@@ -159,18 +160,29 @@ const MainContent = ({
 
         <div className="widget">
           <div className="widget-header">
-            <h3 className="widget-title">Overall Class Progress</h3>
+            <h3 className="widget-title">Average Child Progress (%)</h3>
           </div>
-          <ResponsiveContainer width="100%" height={250}>
-            <LineChart data={progressChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-              <XAxis dataKey="month" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="progress" stroke="#ff1493" strokeWidth={2} activeDot={{ r: 6 }} />
-            </LineChart>
-          </ResponsiveContainer>
+          {chartError && (
+            <div className="alert alert-error" style={{ margin: '12px', padding: '12px', backgroundColor: '#fee', border: '1px solid #fcc', borderRadius: '4px', color: '#c33', fontSize: '14px' }}>
+              ⚠️ {chartError}
+            </div>
+          )}
+          {chartLoading ? (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '250px', color: '#999' }}>
+              <div>Loading progress data...</div>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={250}>
+              <LineChart data={progressChartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                <XAxis dataKey="month" />
+                <YAxis domain={[0, 100]} label={{ value: 'Progress (%)', angle: -90, position: 'insideLeft' }} />
+                <Tooltip formatter={(value) => `${value}%`} />
+                <Legend />
+                <Line type="monotone" dataKey="progress" stroke="#ff1493" strokeWidth={2} activeDot={{ r: 6 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
@@ -180,6 +192,10 @@ const MainContent = ({
           <button className="quick-link-btn" onClick={onCreateReport}>
             <span className="link-icon">📋</span>
             <span>Create New Progress Report</span>
+          </button>
+          <button className="quick-link-btn" onClick={onOpenMultiScreening}>
+            <span className="link-icon">🧩</span>
+            <span>Multi-Disorder Screening</span>
           </button>
           <button className="quick-link-btn" onClick={onAccessResources}>
             <span className="link-icon">📚</span>
@@ -193,29 +209,6 @@ const MainContent = ({
       </div>
 
       <AwarenessHub />
-
-      <div className="widget" style={{ marginTop: '24px' }}>
-        <div className="widget-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-          <h3 className="widget-title">Behavioral Audio Capture</h3>
-          <select
-            value={selectedAudioStudentId}
-            onChange={(e) => onAudioStudentChange(e.target.value)}
-            style={{ border: '1px solid #d1d5db', borderRadius: '8px', padding: '8px 10px', minWidth: '220px' }}
-          >
-            <option value="">Select Student</option>
-            {(students || []).map((student) => (
-              <option key={student._id || student.id} value={student._id || student.id}>
-                {student.name || 'Student'}
-              </option>
-            ))}
-          </select>
-        </div>
-        {selectedAudioStudentId ? (
-          <TeacherAudioCapture studentId={selectedAudioStudentId} />
-        ) : (
-          <p className="empty-message">Select a student to start background audio capture and view recordings.</p>
-        )}
-      </div>
 
       {showRiskEstimator && (
         <ASDRiskEstimator onClose={onToggleRiskEstimator} />
@@ -238,19 +231,9 @@ export default function TeacherDashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [showRiskEstimator, setShowRiskEstimator] = useState(false);
-  const [selectedAudioStudentId, setSelectedAudioStudentId] = useState('');
-
-  // Dummy progress chart data
-  const progressChartData = [
-    { month: 'Aug', progress: 45 },
-    { month: 'Sep', progress: 52 },
-    { month: 'Oct', progress: 58 },
-    { month: 'Nov', progress: 65 },
-    { month: 'Dec', progress: 72 },
-    { month: 'Jan', progress: 78 },
-    { month: 'Feb', progress: 85 },
-    { month: 'Mar', progress: 89 },
-  ];
+  const [progressChartData, setProgressChartData] = useState([]);
+  const [chartLoading, setChartLoading] = useState(true);
+  const [chartError, setChartError] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -287,10 +270,6 @@ export default function TeacherDashboard() {
           studentsData = await studentsRes.json();
           const normalizedStudents = Array.isArray(studentsData) ? studentsData : [];
           setStudents(normalizedStudents);
-          if (!selectedAudioStudentId && normalizedStudents.length > 0) {
-            const defaultStudentId = normalizedStudents[0]._id || normalizedStudents[0].id || '';
-            setSelectedAudioStudentId(String(defaultStudentId));
-          }
         }
 
         if (statsRes.ok) {
@@ -305,7 +284,55 @@ export default function TeacherDashboard() {
     };
 
     fetchData();
-  }, [navigate, selectedAudioStudentId]);
+  }, [navigate]);
+
+  // Fetch dynamic progress chart data
+  useEffect(() => {
+    const fetchProgressData = async () => {
+      try {
+        setChartLoading(true);
+        setChartError(null);
+        const token = localStorage.getItem('token');
+        if (!token) {
+          setChartError('No authentication token found');
+          return;
+        }
+
+        const API_BASE = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+        const response = await fetch(`${API_BASE}/api/teacher/class-progress`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: Failed to fetch progress data`);
+        }
+
+        const data = await response.json();
+        setProgressChartData(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.error('Error fetching progress data:', error);
+        setChartError(error.message || 'Failed to load progress data');
+        // Set default empty data on error
+        setProgressChartData([
+          { month: 'Aug', progress: 0 },
+          { month: 'Sep', progress: 0 },
+          { month: 'Oct', progress: 0 },
+          { month: 'Nov', progress: 0 },
+          { month: 'Dec', progress: 0 },
+          { month: 'Jan', progress: 0 },
+          { month: 'Feb', progress: 0 },
+          { month: 'Mar', progress: 0 }
+        ]);
+      } finally {
+        setChartLoading(false);
+      }
+    };
+
+    fetchProgressData();
+  }, []);
 
   const handleNavClick = (path) => {
     const navMap = {
@@ -313,6 +340,7 @@ export default function TeacherDashboard() {
       '/teacher/students': 'students',
       '/teacher/screenings': 'screenings',
       '/teacher/assessments': 'assessments',
+      '/teacher/multi-screening': 'multi-screening',
       '/teacher/reports': 'reports',
     };
     let navKey = navMap[path];
@@ -323,6 +351,8 @@ export default function TeacherDashboard() {
         navKey = 'screenings';
       } else if (path.startsWith('/teacher/assessments')) {
         navKey = 'assessments';
+      } else if (path.startsWith('/teacher/multi-screening')) {
+        navKey = 'multi-screening';
       } else if (path.startsWith('/teacher/reports')) {
         navKey = 'reports';
       } else if (path.startsWith('/teacher')) {
@@ -336,6 +366,7 @@ export default function TeacherDashboard() {
   const goToStudents = () => handleNavClick('/teacher/students');
   const goToScreenings = () => handleNavClick('/teacher/screenings');
   const goToReports = () => handleNavClick('/teacher/reports');
+  const goToMultiScreening = () => handleNavClick('/teacher/multi-screening');
   const goToStudentProfile = (studentId) => {
     if (!studentId) {
       goToStudents();
@@ -374,15 +405,16 @@ export default function TeacherDashboard() {
         students={students}
         loading={loading}
         progressChartData={progressChartData}
+        chartLoading={chartLoading}
+        chartError={chartError}
         onViewStudents={goToStudents}
         onReviewScreenings={goToScreenings}
         onViewStudent={goToStudentProfile}
         onCreateReport={goToReports}
+        onOpenMultiScreening={goToMultiScreening}
         onAccessResources={goToResources}
         showRiskEstimator={showRiskEstimator}
         onToggleRiskEstimator={handleToggleRiskEstimator}
-        selectedAudioStudentId={selectedAudioStudentId}
-        onAudioStudentChange={setSelectedAudioStudentId}
       />
     </div>
   );

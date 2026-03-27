@@ -148,14 +148,6 @@ try {
   console.error('Behavioral Routes Error:', e.message);
 }
 
-// ✅ Behavioral Audio Capture Routes
-try {
-  app.use('/api', require('./routes/audioCapture'));
-  console.log('✅ Audio Capture Routes Registered');
-} catch (e) {
-  console.error('Audio Capture Routes Error:', e.message);
-}
-
 // ✅ Social Attention Test Routes
 try {
   const socialAttentionRoutes = require('./routes/socialAttention');
@@ -171,6 +163,14 @@ try {
   console.log('✅ Speech Therapy Routes Registered');
 } catch (e) {
   console.error('Speech Therapy Routes Error:', e.message);
+}
+
+// ✅ Multi-Disorder Screening Routes
+try {
+  app.use('/api/multi-screening', require('./routes/multiScreening'));
+  console.log('✅ Multi-Disorder Screening Routes Registered');
+} catch (e) {
+  console.error('Multi-Disorder Screening Routes Error:', e.message);
 }
 
 // ✅ Subscription Routes

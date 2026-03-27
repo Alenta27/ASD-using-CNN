@@ -873,7 +873,7 @@ const DashboardPage = () => {
   };
 
   const handleViewChild = (child) => {
-    setSelectedChild(child);
+    navigate(`/parent/child/${child._id || child.id}`);
   };
 
   const handleSaveChild = (child) => {
@@ -924,7 +924,7 @@ const DashboardPage = () => {
     [
       { id: 'dashboard', label: 'Dashboard', icon: FaHome, path: '/dashboard' },
       { id: 'appointments', label: 'Appointments', icon: FaCalendar, path: '/parent/appointments' },
-      { id: 'screening', label: 'Start Screening', icon: FaChartLine, path: '/parent/screening-results' },
+      { id: 'screening', label: 'Start Screening', icon: FaChartLine, path: '/screening-tools' },
       { id: 'autism-screening', label: 'Autism Screening', icon: FaCheckCircle, path: '/parent/autism-screening' },
       { id: 'attention', label: 'Attention Analysis', icon: FaBrain, path: '/parent/attention-analysis' },
       { id: 'care-team', label: 'Care Team', icon: FaUserTie, path: '/parent/care-team' },
@@ -1201,7 +1201,7 @@ const DashboardPage = () => {
                 <h3 className="text-lg font-bold text-gray-800 mb-4">Quick Actions</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
                   <button
-                    onClick={() => { setActiveNav('screening'); navigate('/parent/screening-results'); }}
+                    onClick={() => { setActiveNav('screening'); navigate('/screening-tools'); }}
                     className="w-full flex items-center justify-between px-4 py-3 bg-blue-50 text-blue-800 rounded-lg hover:bg-blue-100 transition font-semibold text-sm"
                   >
                     <span>Start Screening</span>

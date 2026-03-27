@@ -5,6 +5,8 @@ import {
   FaTimes, FaCheck, FaCalendar
 } from 'react-icons/fa';
 
+const API_BASE = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+
 const AdminScreeningsPage = () => {
   const navigate = useNavigate();
   const [screenings, setScreenings] = useState([]);
@@ -14,6 +16,8 @@ const AdminScreeningsPage = () => {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [screeningToDelete, setScreeningToDelete] = useState(null);
+  const [showViewModal, setShowViewModal] = useState(false);
+  const [selectedScreening, setSelectedScreening] = useState(null);
   const [error, setError] = useState(null);
   const searchTimeoutRef = useRef(null);
 
@@ -25,15 +29,6 @@ const AdminScreeningsPage = () => {
     dateRange: { start: '', end: '' }
   });
 
-  // Mock data - replace with API call
-  const defaultScreenings = [
-    { id: 1, childName: 'Alice Johnson', parentName: 'John Johnson', type: 'Questionnaire', date: '2024-01-15', riskLevel: 'Low', status: 'Completed' },
-    { id: 2, childName: 'Ben Carter', parentName: 'Sarah Carter', type: 'Image Analysis', date: '2024-01-14', riskLevel: 'Medium', status: 'Completed' },
-    { id: 3, childName: 'Chloe Singh', parentName: 'Raj Singh', type: 'Speech Analysis', date: '2024-01-13', riskLevel: 'High', status: 'Completed' },
-    { id: 4, childName: 'Daniel Kim', parentName: 'Lisa Kim', type: 'Questionnaire', date: '2024-01-12', riskLevel: 'Medium', status: 'In Progress' },
-    { id: 5, childName: 'Emma Wilson', parentName: 'Mike Wilson', type: 'Image Analysis', date: '2024-01-11', riskLevel: 'Low', status: 'Completed' },
-  ];
-
   // Load screenings on component mount
   useEffect(() => {
     loadScreenings();
@@ -43,11 +38,25 @@ const AdminScreeningsPage = () => {
     try {
       setLoading(true);
       setError(null);
-      // TODO: Replace with actual API call
-      // const response = await fetch('/api/admin/screenings');
-      // const data = await response.json();
-      // setScreenings(data);
-      setScreenings(defaultScreenings);
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/api/admin/screenings`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to load screenings');
+      }
+
+      const result = await response.json();
+      const rows = Array.isArray(result)
+        ? result
+        : Array.isArray(result?.data)
+          ? result.data
+          : [];
+      setScreenings(rows);
     } catch (err) {
       setError('Failed to load screenings');
       console.error(err);
@@ -135,8 +144,29 @@ const AdminScreeningsPage = () => {
   };
 
   // Action handlers
-  const handleViewScreening = (screeningId) => {
-    navigate(`/admin/screenings/${screeningId}`);
+  const handleViewScreening = async (screeningId) => {
+    try {
+      setError(null);
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/api/admin/screenings/${screeningId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody?.message || errBody?.error || 'Failed to load screening details');
+      }
+
+      const result = await response.json();
+      setSelectedScreening(result?.data || null);
+      setShowViewModal(true);
+    } catch (err) {
+      console.error('Failed to load screening details:', err);
+      setError(`Failed to load screening details: ${err.message || 'Unknown error'}`);
+    }
   };
 
   const handleEditScreening = (screeningId) => {
@@ -145,18 +175,31 @@ const AdminScreeningsPage = () => {
 
   const handleDownloadReport = async (screening) => {
     try {
-      // TODO: Replace with actual API call
-      // const response = await fetch(`/api/admin/screenings/${screening.id}/download`);
-      // const blob = await response.blob();
-      // const url = window.URL.createObjectURL(blob);
-      // const a = document.createElement('a');
-      // a.href = url;
-      // a.download = `screening-${screening.childName}-${screening.date}.pdf`;
-      // document.body.appendChild(a);
-      // a.click();
-      // window.URL.revokeObjectURL(url);
-      // document.body.removeChild(a);
-      alert(`Downloading report for ${screening.childName}`);
+      setError(null);
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/api/admin/screenings/${screening.id}/download`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to download report');
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const fileNameMatch = disposition.match(/filename="?([^\"]+)"?/i);
+      const fileName = fileNameMatch?.[1] || `screening-report-${screening.id}.json`;
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
     } catch (err) {
       console.error('Failed to download report:', err);
       setError('Failed to download report');
@@ -171,11 +214,20 @@ const AdminScreeningsPage = () => {
   const handleConfirmDelete = async () => {
     if (!screeningToDelete) return;
     try {
-      // TODO: Replace with actual API call
-      // const response = await fetch(`/api/admin/screenings/${screeningToDelete.id}`, {
-      //   method: 'DELETE'
-      // });
-      // if (!response.ok) throw new Error('Failed to delete');
+      setError(null);
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/api/admin/screenings/${screeningToDelete.id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete screening');
+      }
+
       setScreenings(prev => prev.filter(s => s.id !== screeningToDelete.id));
       setShowDeleteModal(false);
       setScreeningToDelete(null);
@@ -457,6 +509,87 @@ const AdminScreeningsPage = () => {
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
               >
                 Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Screening Modal */}
+      {showViewModal && selectedScreening && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-800">Screening Report</h3>
+              <button
+                onClick={() => {
+                  setShowViewModal(false);
+                  setSelectedScreening(null);
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <FaTimes />
+              </button>
+            </div>
+
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-gray-500">Child</p>
+                <p className="font-semibold text-gray-900">{selectedScreening.childName}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Parent</p>
+                <p className="font-semibold text-gray-900">{selectedScreening.parentName}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Type</p>
+                <p className="font-semibold text-gray-900">{selectedScreening.type}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Date</p>
+                <p className="font-semibold text-gray-900">{new Date(selectedScreening.date).toISOString().split('T')[0]}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Status</p>
+                <p className="font-semibold text-gray-900">{selectedScreening.status}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Result Label</p>
+                <p className="font-semibold text-gray-900">{selectedScreening.resultLabel || 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Result Score</p>
+                <p className="font-semibold text-gray-900">
+                  {typeof selectedScreening.resultScore === 'number' ? selectedScreening.resultScore : 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-gray-500">Confidence</p>
+                <p className="font-semibold text-gray-900">
+                  {typeof selectedScreening.confidenceScore === 'number' ? selectedScreening.confidenceScore : 'N/A'}
+                </p>
+              </div>
+              <div className="md:col-span-2">
+                <p className="text-gray-500">Notes</p>
+                <p className="font-semibold text-gray-900 whitespace-pre-wrap">{selectedScreening.notes || 'No notes available.'}</p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 p-6 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => handleDownloadReport({ id: selectedScreening.id, childName: selectedScreening.childName })}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              >
+                Download Report
+              </button>
+              <button
+                onClick={() => {
+                  setShowViewModal(false);
+                  setSelectedScreening(null);
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium text-gray-700"
+              >
+                Close
               </button>
             </div>
           </div>

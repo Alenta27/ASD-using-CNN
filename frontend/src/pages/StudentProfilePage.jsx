@@ -3,7 +3,6 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { FaArrowLeft, FaChartLine, FaFileAlt, FaUser, FaPhone, FaEnvelope, FaEdit, FaGamepad, FaTimes } from 'react-icons/fa';
 import GameResultsDisplay from '../components/GameResultsDisplay';
 import SimilarCasesModal from '../components/SimilarCasesModal';
-import TeacherAudioCapture from '../components/TeacherAudioCapture';
 
 const clampDateToRange = (value) => {
   const start = '2025-08-01';
@@ -28,11 +27,19 @@ const clampDateToRange = (value) => {
 };
 
 const StudentProfilePage = () => {
-  const { studentId } = useParams();
+  const { studentId, childId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  
+  // Support both teacher (studentId) and parent (childId) routes
+  const id = studentId || childId;
+  const isTeacher = !!studentId;
+  const isParent = !!childId;
+  
   const [activeTab, setActiveTab] = useState('summary');
   const [student, setStudent] = useState(null);
+  const [screeningHistory, setScreeningHistory] = useState([]);
+  const [parentInfo, setParentInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showGameResults, setShowGameResults] = useState(false);
   const [gameResultId, setGameResultId] = useState(null);
@@ -56,7 +63,7 @@ const StudentProfilePage = () => {
     const fetchStudent = async () => {
       try {
         const token = localStorage.getItem('token');
-        const response = await fetch(`${process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000'}/api/teacher/students`, {
+        const response = await fetch(`${process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000'}/api/patients/${id}`, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
@@ -64,10 +71,24 @@ const StudentProfilePage = () => {
         });
 
         if (response.ok) {
-          const students = await response.json();
-          const foundStudent = students.find(s => s._id === studentId);
-          if (foundStudent) {
-            setStudent({ ...foundStudent, submittedDate: clampDateToRange(foundStudent.submittedDate) });
+          const data = await response.json();
+          setStudent({ ...data.patient, submittedDate: clampDateToRange(data.patient.submittedDate) });
+          
+          // Set parent information
+          if (data.patient.parent_id) {
+            setParentInfo(data.patient.parent_id);
+          }
+          
+          // Set screening history from API
+          if (data.screenings && Array.isArray(data.screenings)) {
+            const formattedScreenings = data.screenings.map((screening) => ({
+              id: screening._id,
+              type: screening.screeningType || 'Screening',
+              date: new Date(screening.createdAt).toLocaleDateString(),
+              result: screening.resultLabel || screening.result || 'Pending',
+              score: screening.resultScore
+            }));
+            setScreeningHistory(formattedScreenings);
           }
         }
       } catch (error) {
@@ -78,14 +99,14 @@ const StudentProfilePage = () => {
     };
 
     fetchStudent();
-    fetchReports();
-  }, [studentId]);
+    if (isTeacher) fetchReports();
+  }, [id, isTeacher]);
 
   const fetchReports = async () => {
     try {
       setReportsLoading(true);
       const token = localStorage.getItem('token');
-      const response = await fetch(`${process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000'}/api/teacher/reports/student/${studentId}`, {
+      const response = await fetch(`${process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000'}/api/teacher/reports/student/${id}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -237,20 +258,6 @@ const StudentProfilePage = () => {
     );
   }
 
-  // Mock data for demonstrations - in real app, this would come from API
-  const screeningHistory = [
-    { type: 'Parent Questionnaire', date: clampDateToRange(student.submittedDate || '2025-09-15'), result: student.riskLevel, id: 1 },
-    { type: 'Facial Screening (CNN)', date: '2025-08-20', result: 'Medium Risk', id: 2 },
-    { type: 'MRI Screening (CNN)', date: '2025-10-05', result: 'Medium Risk', id: 3 },
-  ];
-
-  const parentInfo = {
-    name: 'Mr. Rohan Singh',
-    relationship: 'Father',
-    email: 'rohan.singh@email.com',
-    phone: '+91-999-999-9999'
-  };
-
   const riskLevelTimeline = [
     { month: 'Aug', level: 'Low' },
     { month: 'Sep', level: 'Medium' },
@@ -263,10 +270,10 @@ const StudentProfilePage = () => {
       <div className="bg-white shadow-md">
         <div className="max-w-7xl mx-auto px-6 py-6">
           <button
-            onClick={() => navigate('/teacher/students')}
+            onClick={() => navigate(isTeacher ? '/teacher/students' : '/dashboard')}
             className="flex items-center gap-2 text-gray-600 hover:text-gray-800 mb-4"
           >
-            <FaArrowLeft /> Back to Students
+            <FaArrowLeft /> Back
           </button>
 
           <div className="flex items-start justify-between">
@@ -282,20 +289,22 @@ const StudentProfilePage = () => {
                 </span>
               </div>
             </div>
-            <div className="flex gap-3 flex-wrap">
-              <button 
-                onClick={() => navigate(`/teacher/students/${studentId}/social-game`)}
-                className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-3 rounded-lg font-semibold transition-colors flex items-center gap-2 whitespace-nowrap"
-              >
-                <FaGamepad /> Start Social Response Game
-              </button>
-              <button
-                onClick={() => navigate('/screening-tools', { state: { studentId } })}
-                className="bg-pink-300 hover:bg-pink-400 text-pink-900 px-4 py-3 rounded-lg font-semibold transition-colors whitespace-nowrap"
-              >
-                Start New Screening
-              </button>
-            </div>
+            {isTeacher && (
+              <div className="flex gap-3 flex-wrap">
+                <button 
+                  onClick={() => navigate(`/teacher/students/${id}/social-game`)}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-3 rounded-lg font-semibold transition-colors flex items-center gap-2 whitespace-nowrap"
+                >
+                  <FaGamepad /> Start Social Response Game
+                </button>
+                <button
+                  onClick={() => navigate('/screening-tools', { state: { studentId: id } })}
+                  className="bg-pink-300 hover:bg-pink-400 text-pink-900 px-4 py-3 rounded-lg font-semibold transition-colors whitespace-nowrap"
+                >
+                  Start New Screening
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -304,7 +313,7 @@ const StudentProfilePage = () => {
       <div className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex gap-1">
-            {['summary', 'history', 'reports', 'parent'].map((tab) => (
+            {['summary', 'history', isTeacher ? 'reports' : null, 'parent'].filter(Boolean).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -317,7 +326,7 @@ const StudentProfilePage = () => {
                 {tab === 'summary' && 'Summary'}
                 {tab === 'history' && 'Screening History'}
                 {tab === 'reports' && 'Progress Reports'}
-                {tab === 'parent' && 'Parent/Guardian Info'}
+                {tab === 'parent' && (isTeacher ? 'Parent/Guardian Info' : 'My Details')}
               </button>
             ))}
           </div>
@@ -329,8 +338,6 @@ const StudentProfilePage = () => {
         {/* Summary Tab */}
         {activeTab === 'summary' && (
           <div className="space-y-6">
-            <TeacherAudioCapture studentId={studentId} />
-
             {/* Latest Screening Widget */}
             <div className="bg-white rounded-lg shadow-md p-6">
               <h2 className="text-xl font-semibold text-gray-800 mb-4">Latest Screening</h2>
@@ -398,29 +405,38 @@ const StudentProfilePage = () => {
         {activeTab === 'history' && (
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-2xl font-semibold text-gray-800 mb-6">Screening History</h2>
-            <div className="space-y-4">
-              {screeningHistory.map((screening) => (
-                <div key={screening.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h3 className="font-semibold text-gray-800">{screening.type}</h3>
-                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getRiskColor(screening.result)}`}>
-                          {screening.result} Risk
-                        </span>
+            {screeningHistory.length > 0 ? (
+              <div className="space-y-4">
+                {screeningHistory.map((screening) => (
+                  <div key={screening.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="font-semibold text-gray-800">{screening.type}</h3>
+                          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getRiskColor(
+                            screening.result.includes('Risk') ? screening.result.split(' ')[0] : screening.result
+                          )}`}>
+                            {screening.result}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600">Date: {screening.date}</p>
+                        {screening.score !== undefined && <p className="text-sm text-gray-600">Score: {screening.score.toFixed(2)}</p>}
                       </div>
-                      <p className="text-sm text-gray-600">Date: {clampDateToRange(screening.date)}</p>
+                      <button
+                        onClick={() => progressReports.length && handleViewReport(progressReports[0])}
+                        className="bg-pink-300 hover:bg-pink-400 text-pink-900 px-4 py-2 rounded-lg font-semibold transition-colors"
+                      >
+                        View Report
+                      </button>
                     </div>
-                    <button
-                      onClick={() => progressReports.length && handleViewReport(progressReports[0])}
-                      className="bg-pink-300 hover:bg-pink-400 text-pink-900 px-4 py-2 rounded-lg font-semibold transition-colors"
-                    >
-                      View Report
-                    </button>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-gray-600 bg-gray-50 p-4 rounded-lg">
+                <p>No screening history available for this student.</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -480,36 +496,35 @@ const StudentProfilePage = () => {
         {activeTab === 'parent' && (
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-2xl font-semibold text-gray-800 mb-6">Parent/Guardian Information</h2>
-            <div className="space-y-4">
-              <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
-                <FaUser className="text-pink-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Name</p>
-                  <p className="font-semibold text-gray-800">{parentInfo.name}</p>
+            {parentInfo ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+                  <FaUser className="text-pink-600" />
+                  <div>
+                    <p className="text-sm text-gray-600">Name</p>
+                    <p className="font-semibold text-gray-800">{parentInfo.name || 'N/A'}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+                  <FaEnvelope className="text-pink-600" />
+                  <div>
+                    <p className="text-sm text-gray-600">Email</p>
+                    <p className="font-semibold text-gray-800">{parentInfo.email || 'N/A'}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+                  <FaPhone className="text-pink-600" />
+                  <div>
+                    <p className="text-sm text-gray-600">Phone</p>
+                    <p className="font-semibold text-gray-800">{parentInfo.phone || 'N/A'}</p>
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
-                <FaUser className="text-pink-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Relationship</p>
-                  <p className="font-semibold text-gray-800">{parentInfo.relationship}</p>
-                </div>
+            ) : (
+              <div className="text-gray-600 bg-gray-50 p-4 rounded-lg">
+                <p>No parent information available</p>
               </div>
-              <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
-                <FaEnvelope className="text-pink-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Email</p>
-                  <p className="font-semibold text-gray-800">{parentInfo.email}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
-                <FaPhone className="text-pink-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Phone</p>
-                  <p className="font-semibold text-gray-800">{parentInfo.phone}</p>
-                </div>
-              </div>
-            </div>
+            )}
             <button className="mt-6 bg-pink-300 hover:bg-pink-400 text-pink-900 px-6 py-3 rounded-lg font-semibold transition-colors flex items-center gap-2">
               <FaEnvelope /> Send Secure Message
             </button>
@@ -656,12 +671,12 @@ const StudentProfilePage = () => {
         </div>
       )}
 
-      {showGameResults && gameResultId && (
+      {showGameResults && gameResultId && isTeacher && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <GameResultsDisplay 
               gameResultId={gameResultId}
-              studentId={studentId}
+              studentId={id}
               onClose={() => setShowGameResults(false)}
               onViewSimilarCases={(id) => {
                 setGameResultId(id);

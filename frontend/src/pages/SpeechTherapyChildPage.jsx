@@ -152,6 +152,7 @@ export default function SpeechTherapyChildPage() {
   const [stream, setStream] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState(null);
+  const [audioPreviewUrl, setAudioPreviewUrl] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null);
   
@@ -843,13 +844,41 @@ export default function SpeechTherapyChildPage() {
     };
   }, [stream]);
 
+  useEffect(() => {
+    if (!audioBlob) {
+      setAudioPreviewUrl('');
+      if (audioBlobUrl.current) {
+        URL.revokeObjectURL(audioBlobUrl.current);
+        audioBlobUrl.current = null;
+      }
+      return;
+    }
+
+    if (audioBlobUrl.current) {
+      URL.revokeObjectURL(audioBlobUrl.current);
+    }
+    audioBlobUrl.current = URL.createObjectURL(audioBlob);
+    setAudioPreviewUrl(audioBlobUrl.current);
+  }, [audioBlob]);
+
   // Calculate similarity between two strings (0-100%)
   const calculateSimilarity = (str1, str2) => {
-    const s1 = str1.toLowerCase().trim();
-    const s2 = str2.toLowerCase().trim();
+    const normalize = (value) => String(value || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const s1 = normalize(str1);
+    const s2 = normalize(str2);
     
     if (s1 === s2) return 100;
     if (s1.length === 0 || s2.length === 0) return 0;
+
+    // If one phrase fully contains the other, treat it as a near-perfect match.
+    if (s1.includes(s2) || s2.includes(s1)) {
+      return 96;
+    }
     
     // Levenshtein distance algorithm
     const matrix = [];
@@ -876,9 +905,22 @@ export default function SpeechTherapyChildPage() {
     
     const distance = matrix[s2.length][s1.length];
     const maxLength = Math.max(s1.length, s2.length);
-    const similarity = ((maxLength - distance) / maxLength) * 100;
-    
-    return Math.round(similarity);
+    const charSimilarity = ((maxLength - distance) / maxLength) * 100;
+
+    const words1 = s1.split(' ').filter(Boolean);
+    const words2 = s2.split(' ').filter(Boolean);
+    const maxWords = Math.max(words1.length, words2.length);
+    const set2 = new Set(words2);
+    const overlapCount = words1.filter((word) => set2.has(word)).length;
+    const wordSimilarity = maxWords > 0 ? (overlapCount / maxWords) * 100 : 0;
+
+    const blendedSimilarity = (charSimilarity * 0.55) + (wordSimilarity * 0.45);
+
+    // Single-word prompts are common; give a small fairness boost for close pronunciations.
+    const isSingleWordPrompt = words2.length === 1;
+    const fairnessBoost = isSingleWordPrompt && blendedSimilarity >= 70 ? 8 : 0;
+
+    return Math.round(Math.min(100, blendedSimilarity + fairnessBoost));
   };
   
   // Language-specific feedback messages
@@ -1159,6 +1201,11 @@ export default function SpeechTherapyChildPage() {
       return;
     }
 
+    if (typeof MediaRecorder === 'undefined') {
+      alert('MediaRecorder is not supported in this browser. Please use latest Chrome, Edge, or Firefox.');
+      return;
+    }
+
     try {
       audioChunks.current = [];
       recognitionResultsRef.current = [];
@@ -1250,18 +1297,17 @@ export default function SpeechTherapyChildPage() {
       return;
     }
 
-    // For English: Allow guest uploads (no authentication required)
-    // For Premium: Require parent and child
-    if (isPremiumLanguage) {
-      if (!parentId) {
-        setShowParentRegModal(true);
-        return;
-      }
+    // Upload requires parent + child mapping so sessions can be saved and reviewed.
+    if (!parentId) {
+      setShowParentRegModal(true);
+      setUploadStatus({ type: 'error', message: 'Please complete parent profile before uploading.' });
+      return;
+    }
 
-      if (!selectedChild) {
-        setShowAddChildModal(true);
-        return;
-      }
+    if (!selectedChild) {
+      setShowAddChildModal(true);
+      setUploadStatus({ type: 'error', message: 'Please select a child before uploading.' });
+      return;
     }
 
     setIsUploading(true);
@@ -1269,15 +1315,22 @@ export default function SpeechTherapyChildPage() {
 
     try {
       const formData = new FormData();
-      formData.append('audio', audioBlob, 'speech-recording.webm');
+      const blobType = (audioBlob.type || '').toLowerCase();
+      const extension = blobType.includes('mp4')
+        ? 'm4a'
+        : blobType.includes('ogg')
+          ? 'ogg'
+          : blobType.includes('mpeg')
+            ? 'mp3'
+            : blobType.includes('wav')
+              ? 'wav'
+              : 'webm';
+      formData.append('audio', audioBlob, `speech-recording.${extension}`);
       formData.append('practicePrompt', practicePrompt);
       formData.append('language', selectedLanguage);
       
-      // Only include auth data for premium languages
-      if (isPremiumLanguage && parentId && selectedChild) {
-        formData.append('childId', selectedChild);
-        formData.append('parentId', parentId);
-      }
+      formData.append('childId', selectedChild);
+      formData.append('parentId', parentId);
 
       const response = await axios.post(
         'http://localhost:5000/api/speech-therapy/upload',
@@ -1310,7 +1363,8 @@ export default function SpeechTherapyChildPage() {
       
     } catch (error) {
       console.error('Error uploading recording:', error);
-      setUploadStatus({ type: 'error', message: 'Failed to upload recording. Please try again.' });
+      const message = error?.response?.data?.error || 'Failed to upload recording. Please try again.';
+      setUploadStatus({ type: 'error', message });
     } finally {
       setIsUploading(false);
     }
@@ -1710,13 +1764,7 @@ export default function SpeechTherapyChildPage() {
                         </p>
                       </div>
                       <audio
-                        src={(() => {
-                          if (audioBlobUrl.current) {
-                            URL.revokeObjectURL(audioBlobUrl.current);
-                          }
-                          audioBlobUrl.current = URL.createObjectURL(audioBlob);
-                          return audioBlobUrl.current;
-                        })()}
+                        src={audioPreviewUrl}
                         controls
                         className="w-full mb-8 rounded-2xl"
                         style={{ height: '54px' }}

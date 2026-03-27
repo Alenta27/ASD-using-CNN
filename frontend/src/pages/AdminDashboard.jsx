@@ -557,7 +557,7 @@ const AdminDashboard = () => {
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={screeningTrendsData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis dataKey="month" stroke="#6b7280" tick={{ fontSize: 12 }} />
+                  <XAxis dataKey="month" stroke="#6b7280" tick={{ fontSize: 12 }} interval={0} />
                   <YAxis stroke="#6b7280" allowDecimals={false}
                     label={{ value: 'Screenings', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }} />
                   <Tooltip contentStyle={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px' }} />

@@ -14,6 +14,7 @@ const { generateUniqueId } = require('../utils/idGenerator');
 
 const User = require("../models/user");
 const Patient = require("../models/patient");
+const Screening = require("../models/screening");
 const Feedback = require("../models/feedback");
 const TeacherSettings = require("../models/teacherSettings");
 const Meeting = require("../models/meeting");
@@ -840,27 +841,169 @@ router.get('/api/admin/screenings', verifyToken, async (req, res) => {
         const user = await User.findById(req.user.id);
         if (!user || user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
 
-        const patients = await Patient.find()
-            .populate('parent_id', 'username email')
+    const screenings = await Screening.find({})
+      .populate({ path: 'patientId', populate: { path: 'parent_id', select: 'username email name' } })
             .sort({ createdAt: -1 })
             .lean();
 
-        const screeningsFormatted = patients.map(patient => ({
-            id: patient._id,
-            childName: patient.name,
-            parentName: patient.parent_id ? patient.parent_id.username : 'Unknown',
-            type: 'Patient Registration', // You can enhance this based on actual screening types
-            date: patient.createdAt ? patient.createdAt.toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-            riskLevel: 'Low', // You can enhance this based on actual screening results
-            status: 'Completed'
-        }));
+    const screeningsFormatted = screenings.map(screening => {
+      const patient = screening.patientId;
+      const parent = patient?.parent_id;
 
-        res.json(screeningsFormatted);
+      const resultLabel = String(screening.resultLabel || '').toLowerCase();
+      const legacyResult = String(screening.result || '').toLowerCase();
+
+      let riskLevel = 'Unknown';
+      if (resultLabel.includes('high') || legacyResult.includes('high')) riskLevel = 'High';
+      else if (resultLabel.includes('medium') || resultLabel.includes('moderate') || legacyResult.includes('medium')) riskLevel = 'Medium';
+      else if (resultLabel.includes('low') || resultLabel.includes('no asd') || legacyResult.includes('low')) riskLevel = 'Low';
+
+      const statusRaw = String(screening.status || '').toLowerCase();
+      const status = statusRaw === 'completed'
+        ? 'Completed'
+        : statusRaw === 'in-progress'
+          ? 'In Progress'
+          : statusRaw === 'failed'
+            ? 'Failed'
+            : 'Pending';
+
+      return {
+        id: String(screening._id),
+        childName: patient?.name || screening.childName || 'Unknown Child',
+        parentName: parent?.name || parent?.username || parent?.email || 'Unknown Parent',
+        type: screening.screeningType || 'Screening',
+        date: screening.createdAt ? new Date(screening.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        riskLevel,
+        status
+      };
+    });
+
+    res.json({ success: true, data: screeningsFormatted });
     } catch (err) {
         console.error('Admin screenings error:', err);
         res.status(500).json({ message: 'Server error' });
     }
 });
+
+  router.get('/api/admin/screenings/:id', verifyToken, async (req, res) => {
+    try {
+      const user = await User.findById(req.user.id);
+      if (!user || user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+
+      const { id } = req.params;
+      let screening = await Screening.findById(id)
+        .populate({ path: 'patientId', populate: { path: 'parent_id', select: 'username email name' } })
+        .lean();
+
+      // Backward compatibility: if list id is patientId, return latest screening for that child.
+      if (!screening && mongoose.Types.ObjectId.isValid(id)) {
+        screening = await Screening.findOne({ patientId: id })
+          .sort({ createdAt: -1 })
+          .populate({ path: 'patientId', populate: { path: 'parent_id', select: 'username email name' } })
+          .lean();
+      }
+
+      if (!screening) {
+        return res.status(404).json({ message: 'Screening not found' });
+      }
+
+      const patient = screening.patientId;
+      const parent = patient?.parent_id;
+
+      res.json({
+        success: true,
+        data: {
+          id: String(screening._id),
+          childName: patient?.name || screening.childName || 'Unknown Child',
+          parentName: parent?.name || parent?.username || parent?.email || 'Unknown Parent',
+          type: screening.screeningType || 'Screening',
+          date: screening.createdAt,
+          status: screening.status || 'pending',
+          resultLabel: screening.resultLabel || null,
+          resultScore: screening.resultScore ?? null,
+          confidenceScore: screening.confidenceScore ?? null,
+          notes: screening.notes || '',
+          raw: screening
+        }
+      });
+    } catch (err) {
+      console.error('Admin screening details error:', err);
+      res.status(500).json({ message: 'Server error' });
+    }
+  });
+
+  router.get('/api/admin/screenings/:id/download', verifyToken, async (req, res) => {
+    try {
+      const user = await User.findById(req.user.id);
+      if (!user || user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+
+      const { id } = req.params;
+      let screening = await Screening.findById(id)
+        .populate({ path: 'patientId', populate: { path: 'parent_id', select: 'username email name' } })
+        .lean();
+
+      if (!screening && mongoose.Types.ObjectId.isValid(id)) {
+        screening = await Screening.findOne({ patientId: id })
+          .sort({ createdAt: -1 })
+          .populate({ path: 'patientId', populate: { path: 'parent_id', select: 'username email name' } })
+          .lean();
+      }
+
+      if (!screening) {
+        return res.status(404).json({ message: 'Screening not found' });
+      }
+
+      const report = {
+        generatedAt: new Date().toISOString(),
+        screeningId: String(screening._id),
+        childName: screening.patientId?.name || screening.childName || 'Unknown Child',
+        parentName: screening.patientId?.parent_id?.name || screening.patientId?.parent_id?.username || screening.patientId?.parent_id?.email || 'Unknown Parent',
+        screeningType: screening.screeningType || 'Screening',
+        status: screening.status || 'pending',
+        resultLabel: screening.resultLabel || null,
+        resultScore: screening.resultScore ?? null,
+        confidenceScore: screening.confidenceScore ?? null,
+        notes: screening.notes || '',
+        createdAt: screening.createdAt,
+        updatedAt: screening.updatedAt
+      };
+
+      const fileName = `screening-report-${String(screening._id)}.json`;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      return res.status(200).send(JSON.stringify(report, null, 2));
+    } catch (err) {
+      console.error('Admin screening download error:', err);
+      res.status(500).json({ message: 'Server error' });
+    }
+  });
+
+  router.delete('/api/admin/screenings/:id', verifyToken, async (req, res) => {
+    try {
+      const user = await User.findById(req.user.id);
+      if (!user || user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+
+      const { id } = req.params;
+      let deleted = null;
+
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        deleted = await Screening.findByIdAndDelete(id);
+        if (!deleted) {
+          // Backward compatibility: if id refers to patient, delete latest screening for that patient.
+          deleted = await Screening.findOneAndDelete({ patientId: id }, { sort: { createdAt: -1 } });
+        }
+      }
+
+      if (!deleted) {
+        return res.status(404).json({ message: 'Screening not found' });
+      }
+
+      res.json({ success: true, message: 'Screening deleted successfully' });
+    } catch (err) {
+      console.error('Admin screening delete error:', err);
+      res.status(500).json({ message: 'Server error' });
+    }
+  });
 
 
 router.post('/api/auth/login', async (req, res) => {

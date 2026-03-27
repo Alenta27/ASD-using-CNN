@@ -38,6 +38,10 @@ const speechTherapySchema = new mongoose.Schema({
     type: String,
     required: false
   },
+  audioMimeType: {
+    type: String,
+    required: false
+  },
   
   // Practice Content
   practicePrompt: { 

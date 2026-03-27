@@ -161,18 +161,41 @@ export default function SpeechTherapyDashboard() {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch audio (${response.status})`);
+        let apiMessage = '';
+        try {
+          const payload = await response.json();
+          apiMessage = payload?.error || '';
+        } catch (_) {
+          apiMessage = '';
+        }
+        throw new Error(apiMessage || `Failed to fetch audio (${response.status})`);
       }
 
       const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const audio = new Audio(objectUrl);
-      audio.onended = () => URL.revokeObjectURL(objectUrl);
-      audio.onerror = () => URL.revokeObjectURL(objectUrl);
-      await audio.play();
+      const candidateTypes = [blob.type, 'audio/webm', 'audio/mp4', 'audio/ogg', 'audio/mpeg'].filter(Boolean);
+      let played = false;
+
+      for (const type of candidateTypes) {
+        try {
+          const typedBlob = type === blob.type ? blob : new Blob([blob], { type });
+          const objectUrl = URL.createObjectURL(typedBlob);
+          const audio = new Audio(objectUrl);
+          audio.onended = () => URL.revokeObjectURL(objectUrl);
+          audio.onerror = () => URL.revokeObjectURL(objectUrl);
+          await audio.play();
+          played = true;
+          break;
+        } catch (_) {
+          // Try next mime candidate
+        }
+      }
+
+      if (!played) {
+        throw new Error('Failed to load because no supported source was found.');
+      }
     } catch (err) {
       console.error('Error playing audio:', err);
-      alert('Could not play audio. Please try again.');
+      alert(err.message || 'Could not play audio. Please try again.');
     }
   };
 
@@ -222,8 +245,24 @@ export default function SpeechTherapyDashboard() {
 
   const startRecording = async () => {
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setSubmitStatus({ type: 'error', message: 'Your browser does not support microphone access.' });
+        return;
+      }
+
+      if (typeof MediaRecorder === 'undefined') {
+        setSubmitStatus({ type: 'error', message: 'MediaRecorder is not supported in this browser.' });
+        return;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : '';
+
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       recordingChunksRef.current = [];
 
       recorder.ondataavailable = (event) => {
@@ -233,7 +272,8 @@ export default function SpeechTherapyDashboard() {
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(recordingChunksRef.current, { type: 'audio/webm' });
+        const blobType = mimeType || 'audio/webm';
+        const blob = new Blob(recordingChunksRef.current, { type: blobType });
         setRecordingBlob(blob);
         setHasUploadedRecording(false);
         if (recordingUrl) {
@@ -244,7 +284,7 @@ export default function SpeechTherapyDashboard() {
       };
 
       mediaRecorderRef.current = recorder;
-      recorder.start();
+      recorder.start(250);
       setIsRecording(true);
     } catch (error) {
       console.error('Error starting recording:', error);
@@ -284,7 +324,17 @@ export default function SpeechTherapyDashboard() {
       setIsUploadingRecording(true);
       const token = localStorage.getItem('token');
       const formData = new FormData();
-      formData.append('audio', recordingBlob, `child-attempt-${Date.now()}.webm`);
+      const blobType = (recordingBlob.type || '').toLowerCase();
+      const extension = blobType.includes('mp4')
+        ? 'm4a'
+        : blobType.includes('ogg')
+          ? 'ogg'
+          : blobType.includes('mpeg')
+            ? 'mp3'
+            : blobType.includes('wav')
+              ? 'wav'
+              : 'webm';
+      formData.append('audio', recordingBlob, `child-attempt-${Date.now()}.${extension}`);
 
       const response = await axios.put(
         `http://localhost:5000/api/speech-therapy/session-audio/${selectedSession._id}`,
@@ -505,7 +555,7 @@ export default function SpeechTherapyDashboard() {
                 {pendingSessions.length === 0 ? (
                   <div className="text-center py-8">
                     <CheckCircle className="mx-auto text-green-500 mb-3" size={48} />
-                    <p className="text-gray-600">All caught up!</p>
+                    <p className="text-gray-600">No sessions available</p>
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-[700px] overflow-y-auto">

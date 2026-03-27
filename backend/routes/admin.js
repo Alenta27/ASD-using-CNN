@@ -35,12 +35,16 @@ router.get('/metrics', async (req, res) => {
       }
     });
 
+    // Get total screenings ever (All Screenings)
+    const totalScreenings = await Screening.countDocuments({});
+
     res.json({
       success: true,
       data: {
         pendingApprovals: pendingCount,
         totalActiveUsers: activeUserCount,
-        screeningsThisMonth: screeningsThisMonth
+        screeningsThisMonth: screeningsThisMonth,
+        totalScreenings: totalScreenings
       }
     });
   } catch (error) {
@@ -50,6 +54,155 @@ router.get('/metrics', async (req, res) => {
       error: 'Failed to fetch admin metrics',
       details: error.message
     });
+  }
+});
+
+// GET /api/admin/screenings - Live screening list for All Screenings page
+router.get('/screenings', async (req, res) => {
+  try {
+    const screenings = await Screening.find({})
+      .sort({ createdAt: -1 })
+      .populate('patientId', 'name parent_id')
+      .lean();
+
+    const parentIds = screenings
+      .map((s) => s?.patientId?.parent_id)
+      .filter(Boolean);
+
+    const parents = parentIds.length
+      ? await User.find({ _id: { $in: parentIds } }).select('_id username name email').lean()
+      : [];
+
+    const parentMap = parents.reduce((acc, parent) => {
+      acc[String(parent._id)] = parent;
+      return acc;
+    }, {});
+
+    const normalizeRiskLevel = (screening) => {
+      const fromLabel = String(screening?.resultLabel || '').toLowerCase();
+      const fromLegacy = String(screening?.result || '').toLowerCase();
+
+      if (fromLabel.includes('high') || fromLegacy.includes('high')) return 'High';
+      if (fromLabel.includes('medium') || fromLabel.includes('moderate') || fromLegacy.includes('medium')) return 'Medium';
+      if (fromLabel.includes('low') || fromLabel.includes('no asd') || fromLegacy.includes('low')) return 'Low';
+      return 'Unknown';
+    };
+
+    const normalizeStatus = (status) => {
+      const value = String(status || '').toLowerCase();
+      if (value === 'completed') return 'Completed';
+      if (value === 'in-progress') return 'In Progress';
+      if (value === 'failed') return 'Failed';
+      return 'Pending';
+    };
+
+    const data = screenings.map((screening) => {
+      const patient = screening.patientId;
+      const parent = patient?.parent_id ? parentMap[String(patient.parent_id)] : null;
+
+      return {
+        id: String(screening._id),
+        childName: patient?.name || screening.childName || 'Unknown Child',
+        parentName: parent?.name || parent?.username || parent?.email || 'Unknown Parent',
+        type: screening.screeningType || 'Screening',
+        date: new Date(screening.createdAt).toISOString().split('T')[0],
+        riskLevel: normalizeRiskLevel(screening),
+        status: normalizeStatus(screening.status)
+      };
+    });
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error fetching screenings list:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch screenings', details: error.message });
+  }
+});
+
+// GET /api/admin/screenings/:id - View screening details
+router.get('/screenings/:id', verifyToken, adminCheck, async (req, res) => {
+  try {
+    const screening = await Screening.findById(req.params.id)
+      .populate({ path: 'patientId', populate: { path: 'parent_id', select: 'username name email' } })
+      .lean();
+
+    if (!screening) {
+      return res.status(404).json({ success: false, error: 'Screening not found' });
+    }
+
+    const patient = screening.patientId;
+    const parent = patient?.parent_id;
+
+    res.json({
+      success: true,
+      data: {
+        id: String(screening._id),
+        childName: patient?.name || screening.childName || 'Unknown Child',
+        parentName: parent?.name || parent?.username || parent?.email || 'Unknown Parent',
+        type: screening.screeningType || 'Screening',
+        date: screening.createdAt,
+        status: screening.status || 'pending',
+        resultLabel: screening.resultLabel || null,
+        resultScore: screening.resultScore ?? null,
+        confidenceScore: screening.confidenceScore ?? null,
+        notes: screening.notes || '',
+        raw: screening
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching screening details:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch screening details', details: error.message });
+  }
+});
+
+// DELETE /api/admin/screenings/:id - Delete screening
+router.delete('/screenings/:id', verifyToken, adminCheck, async (req, res) => {
+  try {
+    const deleted = await Screening.findByIdAndDelete(req.params.id);
+
+    if (!deleted) {
+      return res.status(404).json({ success: false, error: 'Screening not found' });
+    }
+
+    res.json({ success: true, message: 'Screening deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting screening:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete screening', details: error.message });
+  }
+});
+
+// GET /api/admin/screenings/:id/download - Download screening report as JSON
+router.get('/screenings/:id/download', verifyToken, adminCheck, async (req, res) => {
+  try {
+    const screening = await Screening.findById(req.params.id)
+      .populate({ path: 'patientId', populate: { path: 'parent_id', select: 'username name email' } })
+      .lean();
+
+    if (!screening) {
+      return res.status(404).json({ success: false, error: 'Screening not found' });
+    }
+
+    const report = {
+      generatedAt: new Date().toISOString(),
+      screeningId: String(screening._id),
+      childName: screening.patientId?.name || screening.childName || 'Unknown Child',
+      parentName: screening.patientId?.parent_id?.name || screening.patientId?.parent_id?.username || screening.patientId?.parent_id?.email || 'Unknown Parent',
+      screeningType: screening.screeningType || 'Screening',
+      status: screening.status || 'pending',
+      resultLabel: screening.resultLabel || null,
+      resultScore: screening.resultScore ?? null,
+      confidenceScore: screening.confidenceScore ?? null,
+      notes: screening.notes || '',
+      createdAt: screening.createdAt,
+      updatedAt: screening.updatedAt
+    };
+
+    const fileName = `screening-report-${String(screening._id)}.json`;
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    return res.status(200).send(JSON.stringify(report, null, 2));
+  } catch (error) {
+    console.error('Error downloading screening report:', error);
+    res.status(500).json({ success: false, error: 'Failed to download screening report', details: error.message });
   }
 });
 
@@ -122,26 +275,40 @@ router.get('/stats', async (req, res) => {
 // GET /api/admin/screening-trends - Month-wise screening trends for the last 6 months
 router.get('/screening-trends', async (req, res) => {
   try {
-    const currentYear = new Date().getFullYear();
-    const currentMonth = new Date().getMonth();
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth(); // 0 = January, 11 = December
 
-    // Define month ranges dynamically for the last 6 months
+    // Calculate the last 6 months ending with the current month
     const monthRanges = [];
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+    // Build date ranges for last 6 months (including current month)
     for (let i = 5; i >= 0; i--) {
-      const start = new Date(currentYear, currentMonth - i, 1);
-      const end = new Date(currentYear, currentMonth - i + 1, 1);
+      let monthToProcess = currentMonth - i;
+      let yearToProcess = currentYear;
+
+      // Handle negative months (previous years)
+      if (monthToProcess < 0) {
+        yearToProcess = currentYear - 1;
+        monthToProcess = 12 + monthToProcess; // e.g., -1 becomes 11 (December)
+      }
+
+      const start = new Date(yearToProcess, monthToProcess, 1);
+      const end = new Date(yearToProcess, monthToProcess + 1, 1); // First day of next month
+      
       monthRanges.push({
-        month: monthNames[start.getMonth()],
-        year: start.getFullYear(),
+        month: monthNames[monthToProcess],
+        monthNumber: monthToProcess + 1, // 1-12 for MongoDB
+        year: yearToProcess,
         start,
         end
       });
     }
 
+    // Fetch all data in the range
     const startDate = monthRanges[0].start;
-    const endDate = monthRanges[5].end;
+    const endDate = monthRanges[monthRanges.length - 1].end;
 
     // Use MongoDB aggregation for efficient counting
     const results = await Screening.aggregate([
@@ -176,10 +343,7 @@ router.get('/screening-trends', async (req, res) => {
 
     // Build the response with proper labels
     const trendsData = monthRanges.map(range => {
-      const year = range.year;
-      const month = range.start.getMonth() + 1;
-      const key = `${year}-${month}`;
-
+      const key = `${range.year}-${range.monthNumber}`;
       return {
         month: range.month,
         screenings: countsMap[key] || 0
